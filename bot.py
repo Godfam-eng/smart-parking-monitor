@@ -23,6 +23,7 @@ from config import Config
 from camera import TapoCamera
 from vision import ParkingVision
 from state import ParkingState
+from notifications import NotificationManager
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +32,8 @@ _config: Optional[Config] = None
 _camera: Optional[TapoCamera] = None
 _vision: Optional[ParkingVision] = None
 _state: Optional[ParkingState] = None
+_notifications: Optional[NotificationManager] = None
+_calibrator = None  # Optional[AutoCalibrator] — imported lazily to avoid circular refs
 
 
 # ------------------------------------------------------------------
@@ -185,6 +188,8 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/scan — Scan the entire street for free spaces\n"
         "/snapshot — Get current camera view (no AI)\n"
         "/stats — View parking statistics\n"
+        "/calibrate — Run auto-calibration sweep\n"
+        "/positions — Show current calibrated scan positions\n"
         "/help — Show this help message"
     )
     await update.message.reply_text(text, parse_mode="Markdown")
@@ -229,6 +234,62 @@ async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await _send_stats_reply(update)
 
 
+@_authorised
+async def cmd_calibrate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/calibrate — Trigger auto-calibration sweep."""
+    if _calibrator is None:
+        await update.message.reply_text(
+            "⚠️ Calibration not available — camera or AI not initialised."
+        )
+        return
+
+    await update.message.reply_text(
+        "🔧 Starting auto-calibration… this may take 5–10 minutes.\n"
+        "Progress updates will appear here."
+    )
+    try:
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(None, _calibrator.run_calibration)
+        scan_str = ", ".join(f"{p}°" for p in result.scan_positions)
+        await update.message.reply_text(
+            f"✅ Calibration complete!\n"
+            f"🏠 Home: {result.home_position}°  |  🔍 Scan: {scan_str}"
+        )
+    except Exception as exc:
+        logger.error("Error in /calibrate handler: %s", exc)
+        await update.message.reply_text(f"⚠️ Calibration failed: {exc}")
+
+
+@_authorised
+async def cmd_positions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/positions — Show current calibrated scan positions."""
+    try:
+        cal = _state.get_latest_calibration()
+        if cal is None:
+            await update.message.reply_text(
+                "⚙️ No calibration data found.\n"
+                "Run /calibrate to auto-configure the camera."
+            )
+            return
+
+        scan_positions = cal.get("scan_positions", [])
+        scan_str = ", ".join(f"{p}°" for p in scan_positions) if scan_positions else "—"
+        restriction = cal.get("opposite_restriction", "unknown").replace("_", " ")
+        text = (
+            "📍 *Current Camera Configuration*\n\n"
+            f"🏠 Home position: *{cal['home_position']}°*\n"
+            f"🔍 Scan positions: *{scan_str}*\n"
+            f"🅿️ Parking side: *{cal.get('parking_side', '—')}*\n"
+            f"🟡 Opposite side: *{restriction}*\n"
+            f"📅 Last calibrated: *{cal.get('timestamp', 'unknown')}*"
+        )
+        await update.message.reply_text(text, parse_mode="Markdown")
+
+    except Exception as exc:
+        logger.error("Error in /positions handler: %s", exc)
+        await update.message.reply_text(f"⚠️ Error fetching positions: {exc}")
+
+
 # ------------------------------------------------------------------
 # Natural language handler
 # ------------------------------------------------------------------
@@ -246,6 +307,10 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await _send_scan_reply(update)
     elif any(kw in text for kw in ("stats", "statistics", "history", "data")):
         await _send_stats_reply(update)
+    elif any(kw in text for kw in ("calibrate", "recalibrate", "calibration")):
+        await cmd_calibrate(update, context)
+    elif any(kw in text for kw in ("positions", "angles")):
+        await cmd_positions(update, context)
     else:
         await update.message.reply_text(
             "🤔 I didn't understand that. Try /help for available commands."
@@ -265,6 +330,8 @@ def _build_application(cfg: Config) -> Application:
     app.add_handler(CommandHandler("scan", cmd_scan))
     app.add_handler(CommandHandler("snapshot", cmd_snapshot))
     app.add_handler(CommandHandler("stats", cmd_stats))
+    app.add_handler(CommandHandler("calibrate", cmd_calibrate))
+    app.add_handler(CommandHandler("positions", cmd_positions))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     return app
 
@@ -278,6 +345,7 @@ def start_bot(
     camera: TapoCamera,
     vision: ParkingVision,
     state: ParkingState,
+    notifications: Optional[NotificationManager] = None,
 ) -> None:
     """
     Initialise module globals and start the Telegram bot polling loop.
@@ -285,11 +353,20 @@ def start_bot(
     Intended to be called in a daemon thread from main.py.
     Also works standalone: ``python bot.py``
     """
-    global _config, _camera, _vision, _state
+    global _config, _camera, _vision, _state, _notifications, _calibrator
     _config = cfg
     _camera = camera
     _vision = vision
     _state = state
+    _notifications = notifications
+
+    # Create the calibrator lazily here to avoid circular imports at module level
+    try:
+        from auto_calibrate import AutoCalibrator
+        _calibrator = AutoCalibrator(camera, vision, state, notifications)
+    except Exception as exc:
+        logger.warning("Could not initialise AutoCalibrator in bot: %s", exc)
+        _calibrator = None
 
     logger.info("Starting Telegram bot…")
     app = _build_application(cfg)
@@ -313,6 +390,7 @@ if __name__ == "__main__":
     from camera import TapoCamera
     from vision import ParkingVision
     from state import ParkingState
+    from notifications import NotificationManager
 
     logging.basicConfig(
         level=logging.INFO,
@@ -326,5 +404,6 @@ if __name__ == "__main__":
     cam = TapoCamera(cfg)
     vis = ParkingVision(cfg)
     db = ParkingState(cfg.DB_PATH)
+    notifs = NotificationManager(cfg)
 
-    start_bot(cfg, cam, vis, db)
+    start_bot(cfg, cam, vis, db, notifs)

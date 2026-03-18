@@ -145,3 +145,94 @@ class TestStateChanges:
         db.record_state_change("FREE", "OCCUPIED", "Car arrived")
         stats = db.get_stats()
         assert stats["state_changes_last_24h"] == 2
+
+
+class TestCalibrationMethods:
+    def test_get_latest_calibration_empty(self, db):
+        assert db.get_latest_calibration() is None
+
+    def test_get_calibration_angles_empty(self, db):
+        assert db.get_calibration_angles(999) == []
+
+    def test_save_and_retrieve_calibration(self, db):
+        # Create a mock CalibrationResult-like object
+        class MockResult:
+            timestamp = "2024-01-01 12:00:00"
+            home_position = 0
+            scan_positions = [-30, 0, 30]
+            parking_side = "near"
+            opposite_restriction = "double_yellow"
+            street_description = "Clear view of street."
+            angle_scores = [
+                {
+                    "angle": -30,
+                    "street_visible": True,
+                    "parking_area_visible": True,
+                    "parking_side": "near",
+                    "obstructions": ["none"],
+                    "home_spot_visible": False,
+                    "usefulness_score": 7,
+                    "description": "Left section.",
+                },
+                {
+                    "angle": 0,
+                    "street_visible": True,
+                    "parking_area_visible": True,
+                    "parking_side": "near",
+                    "obstructions": ["none"],
+                    "home_spot_visible": True,
+                    "usefulness_score": 9,
+                    "description": "Centre — home spot visible.",
+                },
+            ]
+
+        cal_id = db.save_calibration(MockResult())
+        assert isinstance(cal_id, int)
+        assert cal_id > 0
+
+        cal = db.get_latest_calibration()
+        assert cal is not None
+        assert cal["home_position"] == 0
+        assert cal["scan_positions"] == [-30, 0, 30]
+        assert cal["parking_side"] == "near"
+        assert cal["opposite_restriction"] == "double_yellow"
+
+    def test_get_calibration_angles(self, db):
+        class MockResult:
+            timestamp = "2024-01-01 12:00:00"
+            home_position = 0
+            scan_positions = [0]
+            parking_side = "near"
+            opposite_restriction = "double_yellow"
+            street_description = "Test."
+            angle_scores = [
+                {
+                    "angle": -15,
+                    "street_visible": True,
+                    "parking_area_visible": False,
+                    "parking_side": "near",
+                    "obstructions": ["wall"],
+                    "home_spot_visible": False,
+                    "usefulness_score": 4,
+                    "description": "Partial view.",
+                },
+                {
+                    "angle": 0,
+                    "street_visible": True,
+                    "parking_area_visible": True,
+                    "parking_side": "near",
+                    "obstructions": ["none"],
+                    "home_spot_visible": True,
+                    "usefulness_score": 9,
+                    "description": "Home spot.",
+                },
+            ]
+
+        cal_id = db.save_calibration(MockResult())
+        angles = db.get_calibration_angles(cal_id)
+        assert len(angles) == 2
+        # Should be ordered by angle
+        assert angles[0]["angle"] == -15
+        assert angles[1]["angle"] == 0
+        assert angles[1]["home_spot"] == 1
+        assert isinstance(angles[0]["obstructions"], list)

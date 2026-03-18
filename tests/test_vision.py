@@ -174,3 +174,82 @@ class TestCheckHomeSpot:
 
         result = vision.check_scan_position(b"fake-image-bytes", "left")
         assert result["status"] == "OCCUPIED"
+
+
+class TestCalibrationAssessment:
+    def test_parse_calibration_valid_json(self, vision):
+        raw = json.dumps({
+            "street_visible": True,
+            "parking_area_visible": True,
+            "parking_side": "near",
+            "opposite_restriction": "double_yellow",
+            "obstructions": ["none"],
+            "home_spot_visible": True,
+            "usefulness_score": 8,
+            "description": "Clear view of near-side kerbside parking.",
+        })
+        result = vision._parse_calibration_response(raw)
+        assert result["street_visible"] is True
+        assert result["parking_side"] == "near"
+        assert result["usefulness_score"] == 8
+        assert result["home_spot_visible"] is True
+
+    def test_parse_calibration_clamps_score(self, vision):
+        raw = json.dumps({
+            "street_visible": True,
+            "parking_area_visible": True,
+            "parking_side": "near",
+            "opposite_restriction": "none",
+            "obstructions": ["none"],
+            "home_spot_visible": False,
+            "usefulness_score": 999,
+            "description": "Test.",
+        })
+        result = vision._parse_calibration_response(raw)
+        assert result["usefulness_score"] == 10
+
+    def test_parse_calibration_invalid_parking_side(self, vision):
+        raw = json.dumps({
+            "street_visible": False,
+            "parking_area_visible": False,
+            "parking_side": "INVALID",
+            "opposite_restriction": "unclear",
+            "obstructions": ["none"],
+            "home_spot_visible": False,
+            "usefulness_score": 2,
+            "description": "Blocked.",
+        })
+        result = vision._parse_calibration_response(raw)
+        assert result["parking_side"] == "none"
+
+    def test_parse_calibration_unparseable_returns_fallback(self, vision):
+        from vision import _CALIBRATION_FALLBACK
+        result = vision._parse_calibration_response("This is not JSON at all.")
+        assert result == dict(_CALIBRATION_FALLBACK)
+
+    def test_calibration_prompt_contains_angle(self, vision):
+        prompt = vision._build_calibration_prompt(45)
+        assert "+45" in prompt or "45" in prompt
+
+    def test_calibration_prompt_negative_angle(self, vision):
+        prompt = vision._build_calibration_prompt(-30)
+        assert "-30" in prompt
+
+    def test_assess_calibration_frame_returns_dict(self, vision):
+        raw = json.dumps({
+            "street_visible": True,
+            "parking_area_visible": True,
+            "parking_side": "near",
+            "opposite_restriction": "double_yellow",
+            "obstructions": ["none"],
+            "home_spot_visible": False,
+            "usefulness_score": 7,
+            "description": "Street visible.",
+        })
+        mock_response = MagicMock()
+        mock_response.content = [MagicMock(text=raw)]
+        vision.client.messages.create.return_value = mock_response
+
+        result = vision.assess_calibration_frame(b"fake-image", 15)
+        assert result["usefulness_score"] == 7
+        assert result["parking_side"] == "near"

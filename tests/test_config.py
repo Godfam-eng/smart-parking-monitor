@@ -157,3 +157,54 @@ class TestValidation:
             # No TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID
         )
         assert validate(cfg) is False
+
+    def test_validate_passes_without_anthropic_when_not_required(self):
+        """require_anthropic=False allows missing Anthropic key."""
+        cfg = Config(
+            TAPO_IP="192.168.1.1",
+            TAPO_USER="admin",
+            TAPO_PASSWORD="password",
+            # No ANTHROPIC_API_KEY
+        )
+        assert validate(cfg, require_telegram=False, require_anthropic=False) is True
+
+    def test_validate_fails_without_anthropic_when_required(self):
+        """require_anthropic=True (default) requires Anthropic key."""
+        cfg = Config(
+            TAPO_IP="192.168.1.1",
+            TAPO_USER="admin",
+            TAPO_PASSWORD="password",
+            # No ANTHROPIC_API_KEY
+        )
+        assert validate(cfg, require_telegram=False, require_anthropic=True) is False
+
+
+class TestCalibrationConfig:
+    def test_calibration_defaults(self, monkeypatch):
+        for key in ("AUTO_CALIBRATE", "CALIBRATION_INTERVAL_DAYS", "CALIBRATION_MIN_USEFULNESS", "CALIBRATION_ANGLES"):
+            monkeypatch.delenv(key, raising=False)
+        cfg = load_config()
+        assert cfg.AUTO_CALIBRATE is True
+        assert cfg.CALIBRATION_INTERVAL_DAYS == 30
+        assert cfg.CALIBRATION_MIN_USEFULNESS == 6
+        assert cfg.CALIBRATION_ANGLES == [-90, -75, -60, -45, -30, -15, 0, 15, 30, 45, 60, 75, 90]
+
+    def test_auto_calibrate_from_env(self, monkeypatch):
+        monkeypatch.setenv("AUTO_CALIBRATE", "false")
+        cfg = load_config()
+        assert cfg.AUTO_CALIBRATE is False
+
+    def test_calibration_interval_from_env(self, monkeypatch):
+        monkeypatch.setenv("CALIBRATION_INTERVAL_DAYS", "14")
+        cfg = load_config()
+        assert cfg.CALIBRATION_INTERVAL_DAYS == 14
+
+    def test_calibration_min_usefulness_from_env(self, monkeypatch):
+        monkeypatch.setenv("CALIBRATION_MIN_USEFULNESS", "7")
+        cfg = load_config()
+        assert cfg.CALIBRATION_MIN_USEFULNESS == 7
+
+    def test_calibration_angles_from_env(self, monkeypatch):
+        monkeypatch.setenv("CALIBRATION_ANGLES", "-45,0,45")
+        cfg = load_config()
+        assert cfg.CALIBRATION_ANGLES == [-45, 0, 45]
