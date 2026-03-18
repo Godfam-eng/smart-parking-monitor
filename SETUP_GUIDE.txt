@@ -1,0 +1,265 @@
+SMART PARKING MONITOR — SETUP GUIDE
+================================================================================
+Every command is copy-paste ready for a Mac + Raspberry Pi 5 setup.
+Last updated: March 2026
+================================================================================
+
+
+================================================================================
+PART 1 — BEFORE THE PI ARRIVES (do on your Mac)
+================================================================================
+
+1. RASPBERRY PI IMAGER
+   Download from: https://www.raspberrypi.com/software/
+
+2. ANTHROPIC API KEY
+   a. Go to https://console.anthropic.com
+   b. Create account → API Keys → New Key
+   c. Add 5 GBP credit under Billing
+   d. Copy the key (starts sk-ant-…) — you will need it for config.py
+
+3. TELEGRAM BOT
+   a. Open Telegram, search @BotFather
+   b. /newbot → choose a name (e.g. "My Parking Bot") and a username
+   c. Copy the token BotFather gives you (format: 7743829401:AAF…)
+   d. Search @userinfobot → send /start → copy your numeric Chat ID
+
+4. PUSHOVER
+   a. Sign up at https://pushover.net
+   b. Download Pushover app on iPhone (5 GBP one-off in-app purchase)
+   c. Note your User Key from the dashboard
+   d. Create Application called ParkingMonitor → note the API Token
+
+5. TAILSCALE
+   a. Sign up at https://tailscale.com (free, use Google or Apple login)
+   b. Install Tailscale on your Mac and iPhone — sign in with same account
+
+6. TAPO RTSP
+   a. Open Tapo app on your phone
+   b. Tap your C225 → … → Advanced Settings → Camera Account
+   c. Set a username (e.g. admin) and a strong password
+   d. Note these — they go into config.py as TAPO_USER and TAPO_PASS
+
+
+================================================================================
+PART 2 — FLASH THE SD CARD
+================================================================================
+
+1. Insert MicroSD card (via USB-C reader)
+2. Open Raspberry Pi Imager
+3. Choose Device: Raspberry Pi 5
+4. Choose OS: Raspberry Pi OS (64-bit) — the one WITHOUT desktop
+5. Choose Storage: your MicroSD card
+6. Click the ⚙️ gear icon (Advanced Options):
+   - Hostname: parking-pi
+   - Enable SSH: checked
+   - Username: pi   Password: <choose a strong password>
+   - Configure Wi-Fi: enter your home SSID and password
+   - Locale: UK / London
+7. Click Save, then Write
+8. When done: eject the card, insert into Pi, plug in power
+
+
+================================================================================
+PART 3 — FIRST BOOT AND SSH
+================================================================================
+
+Wait 2 minutes after plugging in, then on your Mac:
+
+    ssh pi@parking-pi.local
+
+If that does not resolve, find the Pi's IP from your router admin page and use:
+
+    ssh pi@<IP ADDRESS>
+
+Once logged in, update the Pi:
+
+    sudo apt update && sudo apt upgrade -y
+
+
+================================================================================
+PART 4 — COPY THE CODE TO THE PI
+================================================================================
+
+On your Mac, navigate to where you downloaded the parking_monitor folder, then:
+
+    scp -r parking_monitor pi@parking-pi.local:/home/pi/
+
+Or if using a USB stick:
+    Plug stick into Pi, then:  cp -r /media/pi/<STICK NAME>/parking_monitor /home/pi/
+
+
+================================================================================
+PART 5 — INSTALL PYTHON DEPENDENCIES
+================================================================================
+
+On the Pi:
+
+    cd /home/pi/parking_monitor
+    python3 -m venv venv
+    source venv/bin/activate
+    pip install --upgrade pip
+    pip install -r requirements.txt
+
+
+================================================================================
+PART 6 — CONFIGURE THE SYSTEM
+================================================================================
+
+Edit config.py:
+
+    nano config.py
+
+Fill in every REPLACE_ME value:
+    TAPO_IP        — check your router for the camera's local IP
+    TAPO_USER      — Camera Account username (e.g. admin)
+    TAPO_PASS      — Camera Account password
+    ANTHROPIC_API_KEY
+    TELEGRAM_BOT_TOKEN
+    TELEGRAM_CHAT_ID
+    PUSHOVER_USER_KEY
+    PUSHOVER_API_TOKEN
+
+Save with Ctrl+O, Enter, Ctrl+X.
+
+
+================================================================================
+PART 7 — CALIBRATE THE CAMERA
+================================================================================
+
+This moves the camera through all pan angles and saves a photo at each position.
+You only need to do this once.
+
+    source venv/bin/activate
+    python calibrate.py
+
+When finished, copy the photos to your Mac:
+
+    # Run this on your Mac, not the Pi:
+    scp -r pi@parking-pi.local:/home/pi/parking_monitor/calibration_photos .
+
+Open the photos in Finder / Preview. Note which pan angle (shown in the filename)
+covers which part of the street. Update SCAN_POSITIONS in config.py with 4-6
+useful angles and meaningful labels (e.g. "far left", "mid left", "home", etc.).
+
+
+================================================================================
+PART 8 — TEST EVERYTHING
+================================================================================
+
+Open three SSH windows to the Pi.
+
+WINDOW 1 — Test the main loop (Ctrl+C to stop after a few checks):
+
+    cd /home/pi/parking_monitor
+    source venv/bin/activate
+    python main.py
+
+WINDOW 2 — Test the Telegram bot:
+
+    cd /home/pi/parking_monitor
+    source venv/bin/activate
+    python bot.py
+
+    # Then send /status to your bot in Telegram
+
+WINDOW 3 — Test the API server:
+
+    cd /home/pi/parking_monitor
+    source venv/bin/activate
+    python api.py
+
+    # Then on the Pi or Mac:
+    curl http://parking-pi.local:8080/status
+    curl http://parking-pi.local:8080/scan
+
+
+================================================================================
+PART 9 — INSTALL AS A SYSTEM SERVICE
+================================================================================
+
+The service file makes main.py start automatically on every boot.
+
+    sudo cp /home/pi/parking_monitor/parking-monitor.service /etc/systemd/system/
+    sudo systemctl daemon-reload
+    sudo systemctl enable parking-monitor
+    sudo systemctl start parking-monitor
+
+Check it is running:
+
+    sudo systemctl status parking-monitor
+    journalctl -u parking-monitor -f   # live logs
+
+To also run bot.py and api.py as services, repeat the pattern above by creating
+additional .service files (copy parking-monitor.service, change the ExecStart line).
+
+
+================================================================================
+PART 10 — INSTALL TAILSCALE FOR REMOTE ACCESS
+================================================================================
+
+On the Pi:
+
+    curl -fsSL https://tailscale.com/install.sh | sh
+    sudo tailscale up
+
+Follow the link printed in the terminal to authenticate with your Tailscale account.
+Then:
+
+    tailscale ip -4
+
+Note the 100.x.x.x address — this is your Pi's private Tailscale IP.
+
+
+================================================================================
+PART 11 — SIRI SHORTCUT SETUP
+================================================================================
+
+On your iPhone:
+
+1. Open the Shortcuts app
+2. Tap + (New Shortcut)
+3. Add action: "Get Contents of URL"
+   URL: http://100.x.x.x:8080/scan    (replace with your Tailscale IP)
+   Method: GET
+4. Add action: "Speak Text"
+   Input: Contents of URL (from step 3)
+5. Tap the shortcut name → rename to "Parking"
+6. Tap Add to Siri → record the phrase "Is parking free?"
+7. Tap Done
+
+Test it: raise your wrist on Apple Watch and say:
+    "Hey Siri, is parking free?"
+
+Siri will trigger the scan and speak the result.
+
+
+================================================================================
+QUICK REFERENCE — USEFUL COMMANDS
+================================================================================
+
+Check service status:
+    sudo systemctl status parking-monitor
+
+View live logs:
+    journalctl -u parking-monitor -f
+
+Restart service after config change:
+    sudo systemctl restart parking-monitor
+
+Manual parking check:
+    cd /home/pi/parking_monitor && source venv/bin/activate && python -c "
+    import asyncio, camera, vision
+    img = camera.get_snapshot()
+    print(vision.check_home_spot(img))
+    "
+
+View parking statistics:
+    cd /home/pi/parking_monitor && source venv/bin/activate && python -c "
+    import state; import json; print(json.dumps(state.get_stats(), indent=2))
+    "
+
+
+================================================================================
+END OF SETUP GUIDE
+================================================================================
