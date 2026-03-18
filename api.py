@@ -7,6 +7,7 @@ Uses aiohttp for async HTTP serving.
 
 import asyncio
 import logging
+import os
 import time
 from datetime import datetime, timezone
 from typing import Optional
@@ -17,6 +18,10 @@ from config import Config
 from camera import TapoCamera
 from vision import ParkingVision
 from state import ParkingState
+
+# Resolve the directory that contains this file so we can serve static assets
+# regardless of the working directory the process was started from.
+_STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +49,8 @@ async def auth_middleware(request: web.Request, handler):
     If API_KEY is empty the middleware is a no-op (backward-compatible).
     """
     api_key = _config.API_KEY if _config else ""
-    if api_key and request.path not in ("/", "/health"):
+    exempt = {"/", "/health", "/dashboard", "/manifest.json", "/sw.js"}
+    if api_key and request.path not in exempt and not request.path.startswith("/static/"):
         provided = request.headers.get("X-API-Key", "")
         if provided != api_key:
             return web.json_response({"error": "Unauthorized"}, status=401)
@@ -310,6 +316,83 @@ async def handle_calibration_status(request: web.Request) -> web.Response:
 
 
 # ------------------------------------------------------------------
+# PWA Dashboard handlers
+# ------------------------------------------------------------------
+
+def _read_static(filename: str) -> bytes:
+    """Read a file from the static/ directory and return its contents."""
+    path = os.path.join(_STATIC_DIR, filename)
+    with open(path, "rb") as fh:
+        return fh.read()
+
+
+async def handle_dashboard(request: web.Request) -> web.Response:
+    """GET /dashboard — Serve the PWA dashboard HTML (no auth required)."""
+    try:
+        body = _read_static("dashboard.html")
+        return web.Response(body=body, content_type="text/html")
+    except FileNotFoundError:
+        return web.Response(text="Dashboard not found.", status=404, content_type="text/plain")
+
+
+async def handle_manifest(request: web.Request) -> web.Response:
+    """GET /manifest.json — Serve the PWA web-app manifest (no auth required)."""
+    try:
+        body = _read_static("manifest.json")
+        return web.Response(body=body, content_type="application/manifest+json")
+    except FileNotFoundError:
+        return web.json_response({"error": "manifest.json not found"}, status=404)
+
+
+async def handle_sw(request: web.Request) -> web.Response:
+    """GET /sw.js — Serve the service worker (no auth required)."""
+    try:
+        body = _read_static("sw.js")
+        return web.Response(
+            body=body,
+            content_type="application/javascript",
+            headers={"Service-Worker-Allowed": "/"},
+        )
+    except FileNotFoundError:
+        return web.Response(text="// sw.js not found", status=404, content_type="application/javascript")
+
+
+async def handle_config(request: web.Request) -> web.Response:
+    """GET /config — Return non-sensitive configuration as JSON."""
+    cfg = _config
+    if cfg is None:
+        return web.json_response({"error": "Config not initialised"}, status=503)
+    return web.json_response(
+        {
+            "check_interval": cfg.CHECK_INTERVAL,
+            "quiet_hours_start": cfg.QUIET_HOURS_START,
+            "quiet_hours_end": cfg.QUIET_HOURS_END,
+            "parking_zone_top": cfg.PARKING_ZONE_TOP,
+            "parking_zone_bottom": cfg.PARKING_ZONE_BOTTOM,
+            "parking_zone_left": cfg.PARKING_ZONE_LEFT,
+            "parking_zone_right": cfg.PARKING_ZONE_RIGHT,
+            "scan_positions": cfg.SCAN_POSITIONS,
+            "confidence_threshold": cfg.CONFIDENCE_THRESHOLD,
+            "home_position": cfg.HOME_POSITION,
+            "api_port": cfg.API_PORT,
+            "street_parking_side": cfg.STREET_PARKING_SIDE,
+            "opposite_side_restriction": cfg.OPPOSITE_SIDE_RESTRICTION,
+        }
+    )
+
+
+async def handle_history(request: web.Request) -> web.Response:
+    """GET /history — Return hourly breakdown data combined with overall stats."""
+    try:
+        hours = _state.get_hourly_breakdown()
+        stats = _state.get_stats()
+        return web.json_response({"hours": hours, "stats": stats})
+    except Exception as exc:
+        logger.error("Error in /history handler: %s", exc)
+        return web.json_response({"error": str(exc)}, status=500)
+
+
+# ------------------------------------------------------------------
 # App factory
 # ------------------------------------------------------------------
 
@@ -328,6 +411,12 @@ def _build_app() -> web.Application:
     app.router.add_get("/health", handle_health)
     app.router.add_post("/calibrate", handle_calibrate)
     app.router.add_get("/calibration", handle_calibration_status)
+    # PWA dashboard routes
+    app.router.add_get("/dashboard", handle_dashboard)
+    app.router.add_get("/manifest.json", handle_manifest)
+    app.router.add_get("/sw.js", handle_sw)
+    app.router.add_get("/config", handle_config)
+    app.router.add_get("/history", handle_history)
     return app
 
 

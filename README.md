@@ -55,6 +55,7 @@ Smart Parking Monitor watches your UK terraced street 24/7 through a window-moun
 - ✅ **Full street scan** — Pan camera across the entire street to find the nearest free space
 - ✅ **SQLite statistics** — Track parking patterns, busiest hours, free percentage
 - ✅ **HTTP REST API** — Full JSON API plus plain-text Siri-compatible responses
+- ✅ **PWA Dashboard** — Mobile-first web interface at `/dashboard`; installable on iPhone/Android home screen
 - ✅ **Tailscale remote access** — Secure access from anywhere via VPN
 - ✅ **systemd service** — Auto-start on boot, automatic restart on failure
 - ✅ **Smart auto-calibration** — Claude AI scores each angle on first boot and selects optimal scan positions automatically

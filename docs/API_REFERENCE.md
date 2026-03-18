@@ -30,6 +30,89 @@ GET http://100.x.y.z:8080/
 
 ---
 
+### `GET /dashboard` *(no auth required)*
+
+Serves the Progressive Web App (PWA) dashboard HTML. Open this URL in any browser to access the full visual monitoring interface.
+
+- On iPhone/Android: tap the share button → "Add to Home Screen" to install as a home-screen app.
+- No API key required — the page prompts for the key in-app if one is configured.
+
+**Example request:**
+```
+GET http://100.x.y.z:8080/dashboard
+```
+
+**Response:** `200 OK` with `Content-Type: text/html`
+
+---
+
+### `GET /manifest.json` *(no auth required)*
+
+PWA web-app manifest (used by the browser to install the app to the home screen).
+
+---
+
+### `GET /sw.js` *(no auth required)*
+
+Service worker script (caches the dashboard shell for offline use).
+
+---
+
+### `GET /config`
+
+Returns the current non-sensitive configuration as JSON. Useful for the dashboard to discover the check interval and parking zone settings.
+
+**Sensitive fields** (API keys, tokens, passwords) are **never** included in this response.
+
+**Example response:**
+```json
+{
+  "check_interval": 180,
+  "quiet_hours_start": 23,
+  "quiet_hours_end": 7,
+  "parking_zone_top": 30,
+  "parking_zone_bottom": 80,
+  "parking_zone_left": 20,
+  "parking_zone_right": 80,
+  "scan_positions": [-60, -30, 0, 30, 60],
+  "confidence_threshold": "medium",
+  "home_position": 0,
+  "api_port": 8080,
+  "street_parking_side": "near",
+  "opposite_side_restriction": "double_yellow"
+}
+```
+
+---
+
+### `GET /history`
+
+Returns hourly breakdown data (24 hours, 0–23) combined with overall statistics. Used by the dashboard heatmap.
+
+**Example response:**
+```json
+{
+  "hours": [
+    {"hour": 0, "total": 4, "free": 4, "occupied": 0, "free_percentage": 100.0},
+    {"hour": 1, "total": 4, "free": 4, "occupied": 0, "free_percentage": 100.0},
+    ...
+  ],
+  "stats": {
+    "total_checks": 2880,
+    "free_percentage": 68.5,
+    "occupied_percentage": 31.5,
+    "busiest_hours": [{"hour": 9, "count": 145}],
+    "freest_hours": [{"hour": 3, "count": 119}],
+    "checks_last_24h": 480,
+    "state_changes_last_24h": 12,
+    "last_check": {"timestamp": "2026-03-18 08:15:00", "status": "FREE"},
+    "days_of_data": 6
+  }
+}
+```
+
+---
+
 ### `GET /status`
 
 Check home parking spot status. Returns **plain text** suitable for Siri Shortcuts.
@@ -237,7 +320,8 @@ Plain-text endpoints (`/status`, `/scan`) return HTTP 500 with a plain-text erro
 
 ## Notes
 
-- **Authentication**: None. Rely on Tailscale VPN to restrict access.
-- **Concurrency**: The API server runs in a separate thread from the monitoring loop. Concurrent camera access is possible but unlikely to cause issues in normal usage.
+- **Authentication**: Optional. Set `API_KEY` in `.env` to enable. Exempt routes: `/`, `/health`, `/dashboard`, `/manifest.json`, `/sw.js`.
+- **Concurrency**: The API server runs in a separate thread from the monitoring loop. The `TapoCamera` uses an `RLock` to serialise concurrent access safely.
 - **Timeouts**: `/scan` and `/health` may take 30–60+ seconds. Set appropriate timeouts in your Siri Shortcut (60+ seconds recommended).
-- **CORS**: Not configured. Use from native apps or curl only.
+- **CORS**: Not configured. Use from native apps, the PWA dashboard, or curl only.
+- **PWA Dashboard**: Visit `/dashboard` in any browser. Installable on iPhone via Safari → Share → Add to Home Screen.

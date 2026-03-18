@@ -1,0 +1,1220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#22c55e" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#16a34a" media="(prefers-color-scheme: dark)">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Parking">
+  <meta name="mobile-web-app-capable" content="yes">
+  <link rel="manifest" href="/manifest.json">
+  <title>Parking Monitor</title>
+  <style>
+    /* ── CSS Variables ── */
+    :root {
+      --bg: #f5f5f7;
+      --surface: #ffffff;
+      --surface2: #f0f0f3;
+      --border: rgba(0,0,0,0.08);
+      --text: #1c1c1e;
+      --text2: #6e6e73;
+      --text3: #aeaeb2;
+      --green: #22c55e;
+      --green-dim: #16a34a;
+      --red: #ef4444;
+      --red-dim: #b91c1c;
+      --yellow: #f59e0b;
+      --blue: #3b82f6;
+      --tab-h: 56px;
+      --safe-bottom: env(safe-area-inset-bottom, 0px);
+      --safe-top: env(safe-area-inset-top, 0px);
+      --radius: 16px;
+      --radius-sm: 10px;
+      --shadow: 0 2px 12px rgba(0,0,0,0.07);
+      --shadow-md: 0 4px 24px rgba(0,0,0,0.12);
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0a0a0a;
+        --surface: #1c1c1e;
+        --surface2: #2c2c2e;
+        --border: rgba(255,255,255,0.08);
+        --text: #f2f2f7;
+        --text2: #98989d;
+        --text3: #48484a;
+        --shadow: 0 2px 12px rgba(0,0,0,0.4);
+        --shadow-md: 0 4px 24px rgba(0,0,0,0.5);
+      }
+    }
+
+    /* ── Reset & Base ── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      height: 100%; width: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+        Helvetica, Arial, sans-serif;
+      font-size: 16px;
+      line-height: 1.5;
+      -webkit-tap-highlight-color: transparent;
+      overscroll-behavior: none;
+    }
+
+    /* ── Layout ── */
+    #app {
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      height: 100dvh;
+    }
+    #screens {
+      flex: 1;
+      overflow: hidden;
+      position: relative;
+    }
+    .screen {
+      position: absolute;
+      inset: 0;
+      overflow-y: auto;
+      padding: calc(var(--safe-top) + 16px) 16px
+               calc(var(--tab-h) + var(--safe-bottom) + 16px);
+      opacity: 0;
+      pointer-events: none;
+      transform: translateY(8px);
+      transition: opacity 0.2s ease, transform 0.2s ease;
+    }
+    .screen.active {
+      opacity: 1;
+      pointer-events: all;
+      transform: translateY(0);
+    }
+
+    /* ── Tab Bar ── */
+    #tab-bar {
+      position: fixed;
+      bottom: 0; left: 0; right: 0;
+      height: calc(var(--tab-h) + var(--safe-bottom));
+      padding-bottom: var(--safe-bottom);
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+      display: flex;
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      z-index: 100;
+    }
+    .tab-btn {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 2px;
+      border: none;
+      background: transparent;
+      color: var(--text3);
+      cursor: pointer;
+      padding: 6px 0;
+      min-height: 44px;
+      transition: color 0.15s;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .tab-btn.active { color: var(--green); }
+    .tab-btn svg { width: 24px; height: 24px; }
+    .tab-label { font-size: 10px; font-weight: 500; letter-spacing: 0.2px; }
+
+    /* ── Cards ── */
+    .card {
+      background: var(--surface);
+      border-radius: var(--radius);
+      padding: 20px;
+      margin-bottom: 12px;
+      box-shadow: var(--shadow);
+    }
+    .card-title {
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      color: var(--text2);
+      margin-bottom: 12px;
+    }
+
+    /* ── Status Indicator ── */
+    .status-hero {
+      text-align: center;
+      padding: 28px 20px;
+    }
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 120px; height: 120px;
+      border-radius: 50%;
+      font-size: 52px;
+      margin-bottom: 16px;
+      position: relative;
+    }
+    .status-badge::after {
+      content: '';
+      position: absolute;
+      inset: -6px;
+      border-radius: 50%;
+      border: 3px solid currentColor;
+      opacity: 0.25;
+    }
+    .status-badge.free { color: var(--green); background: rgba(34,197,94,0.1); }
+    .status-badge.occupied { color: var(--red); background: rgba(239,68,68,0.1); }
+    .status-badge.unknown { color: var(--text3); background: var(--surface2); }
+    .status-text {
+      font-size: 32px;
+      font-weight: 700;
+      letter-spacing: -0.5px;
+      margin-bottom: 6px;
+    }
+    .status-text.free { color: var(--green); }
+    .status-text.occupied { color: var(--red); }
+    .status-text.unknown { color: var(--text2); }
+    .status-desc { font-size: 15px; color: var(--text2); max-width: 280px; margin: 0 auto 16px; }
+    .confidence-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 12px;
+      border-radius: 20px;
+      background: var(--surface2);
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text2);
+      margin-bottom: 12px;
+    }
+    .confidence-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+    }
+    .confidence-dot.high { background: var(--green); }
+    .confidence-dot.medium { background: var(--yellow); }
+    .confidence-dot.low { background: var(--red); }
+
+    /* ── Buttons ── */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 14px 28px;
+      border-radius: 14px;
+      border: none;
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+      min-height: 50px;
+      transition: opacity 0.15s, transform 0.1s;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .btn:active { transform: scale(0.97); opacity: 0.85; }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+    .btn-primary { background: var(--green); color: #fff; width: 100%; }
+    .btn-secondary {
+      background: var(--surface2);
+      color: var(--text);
+      width: 100%;
+    }
+
+    /* ── Meta row ── */
+    .meta-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .meta-row:last-child { border-bottom: none; }
+    .meta-label { font-size: 15px; color: var(--text2); }
+    .meta-value { font-size: 15px; font-weight: 500; text-align: right; max-width: 55%; }
+
+    /* ── Heatmap ── */
+    .heatmap-grid {
+      display: grid;
+      grid-template-columns: repeat(8, 1fr);
+      gap: 4px;
+      margin-bottom: 16px;
+    }
+    .heatmap-cell {
+      aspect-ratio: 1;
+      border-radius: 6px;
+      position: relative;
+      cursor: default;
+    }
+    .heatmap-cell .cell-label {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 9px;
+      font-weight: 600;
+      color: rgba(255,255,255,0.85);
+      pointer-events: none;
+    }
+    .heatmap-legend {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      color: var(--text2);
+      justify-content: center;
+    }
+    .legend-grad {
+      flex: 1;
+      max-width: 160px;
+      height: 8px;
+      border-radius: 4px;
+      background: linear-gradient(to right,
+        hsl(142,72%,29%),
+        hsl(95,60%,42%),
+        hsl(48,96%,53%),
+        hsl(14,85%,55%),
+        hsl(0,84%,60%));
+    }
+
+    /* ── Stat pills ── */
+    .stat-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+    .stat-pill {
+      background: var(--surface2);
+      border-radius: var(--radius-sm);
+      padding: 14px 12px;
+      text-align: center;
+    }
+    .stat-pill-val {
+      font-size: 22px;
+      font-weight: 700;
+      line-height: 1.2;
+    }
+    .stat-pill-val.green { color: var(--green); }
+    .stat-pill-val.red { color: var(--red); }
+    .stat-pill-label { font-size: 12px; color: var(--text2); margin-top: 2px; }
+
+    /* ── Scan position cards ── */
+    .position-card {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      padding: 14px 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .position-card:last-child { border-bottom: none; }
+    .position-icon {
+      width: 40px; height: 40px;
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 20px;
+      flex-shrink: 0;
+    }
+    .position-icon.free { background: rgba(34,197,94,0.15); }
+    .position-icon.occupied { background: rgba(239,68,68,0.15); }
+    .position-icon.unknown { background: var(--surface2); }
+    .position-info { flex: 1; min-width: 0; }
+    .position-name { font-weight: 600; font-size: 15px; }
+    .position-desc { font-size: 13px; color: var(--text2); margin-top: 2px; line-height: 1.4; }
+    .position-badge {
+      font-size: 11px;
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: 6px;
+      flex-shrink: 0;
+      align-self: flex-start;
+      margin-top: 2px;
+    }
+    .position-badge.free { background: rgba(34,197,94,0.15); color: var(--green-dim); }
+    .position-badge.occupied { background: rgba(239,68,68,0.15); color: var(--red-dim); }
+    .position-badge.unknown { background: var(--surface2); color: var(--text2); }
+
+    /* ── Camera / snapshot ── */
+    .snapshot-wrap {
+      border-radius: var(--radius-sm);
+      overflow: hidden;
+      background: #000;
+      position: relative;
+      min-height: 200px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    #snapshot-img {
+      width: 100%;
+      display: block;
+      border-radius: var(--radius-sm);
+    }
+    .snapshot-placeholder {
+      color: var(--text3);
+      font-size: 14px;
+      padding: 40px;
+      text-align: center;
+    }
+
+    /* ── Settings ── */
+    .settings-section { margin-bottom: 8px; }
+    .settings-header {
+      font-size: 13px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--text2);
+      padding: 6px 0 8px;
+    }
+
+    /* ── Spinner ── */
+    .spinner {
+      display: inline-block;
+      width: 20px; height: 20px;
+      border: 2px solid var(--border);
+      border-top-color: currentColor;
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Loading overlay ── */
+    .loading-overlay {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
+      padding: 40px;
+      color: var(--text2);
+      font-size: 15px;
+    }
+    .loading-overlay .spinner { width: 32px; height: 32px; }
+
+    /* ── Error banner ── */
+    .error-banner {
+      background: rgba(239,68,68,0.1);
+      border: 1px solid rgba(239,68,68,0.25);
+      border-radius: var(--radius-sm);
+      padding: 12px 16px;
+      font-size: 14px;
+      color: var(--red);
+      margin-bottom: 12px;
+    }
+
+    /* ── Countdown pill ── */
+    .countdown-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: var(--surface2);
+      border-radius: 20px;
+      padding: 4px 12px;
+      font-size: 13px;
+      color: var(--text2);
+      margin-top: 8px;
+    }
+
+    /* ── Toggle switch ── */
+    .toggle-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .toggle-row:last-child { border-bottom: none; }
+    .toggle-label { font-size: 15px; }
+    .toggle {
+      position: relative;
+      width: 48px; height: 28px;
+    }
+    .toggle input { opacity: 0; width: 0; height: 0; }
+    .toggle-track {
+      position: absolute;
+      inset: 0;
+      border-radius: 14px;
+      background: var(--surface2);
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    .toggle-track::after {
+      content: '';
+      position: absolute;
+      top: 3px; left: 3px;
+      width: 22px; height: 22px;
+      border-radius: 50%;
+      background: #fff;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.2);
+      transition: transform 0.2s;
+    }
+    .toggle input:checked + .toggle-track { background: var(--green); }
+    .toggle input:checked + .toggle-track::after { transform: translateX(20px); }
+
+    /* ── API Key prompt ── */
+    #api-key-modal {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.6);
+      backdrop-filter: blur(8px);
+      z-index: 200;
+      align-items: flex-end;
+      padding: 0;
+    }
+    #api-key-modal.show { display: flex; }
+    .modal-sheet {
+      background: var(--surface);
+      border-radius: var(--radius) var(--radius) 0 0;
+      padding: 24px 20px calc(var(--safe-bottom) + 24px);
+      width: 100%;
+    }
+    .modal-title { font-size: 18px; font-weight: 700; margin-bottom: 8px; }
+    .modal-desc { font-size: 14px; color: var(--text2); margin-bottom: 16px; }
+    .text-input {
+      width: 100%;
+      padding: 14px 16px;
+      border-radius: var(--radius-sm);
+      border: 1.5px solid var(--border);
+      background: var(--surface2);
+      color: var(--text);
+      font-size: 16px;
+      outline: none;
+      margin-bottom: 12px;
+      -webkit-appearance: none;
+    }
+    .text-input:focus { border-color: var(--green); }
+
+    /* ── Uptime chip ── */
+    .uptime-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 13px;
+      color: var(--text2);
+      background: var(--surface2);
+      border-radius: 20px;
+      padding: 4px 12px;
+    }
+    .uptime-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: var(--green);
+      animation: pulse 2s ease-in-out infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+
+    /* ── Section header ── */
+    .screen-title {
+      font-size: 28px;
+      font-weight: 700;
+      letter-spacing: -0.5px;
+      margin-bottom: 16px;
+    }
+
+    /* ── Hour highlight pills ── */
+    .hour-list { display: flex; flex-wrap: wrap; gap: 6px; }
+    .hour-pill {
+      background: var(--surface2);
+      border-radius: 8px;
+      padding: 4px 10px;
+      font-size: 13px;
+      font-weight: 500;
+    }
+  </style>
+</head>
+<body>
+<div id="app">
+  <div id="screens">
+
+    <!-- ── Screen 1: Home ── -->
+    <div class="screen active" id="screen-home">
+      <div id="home-error" class="error-banner" style="display:none"></div>
+      <div class="card status-hero">
+        <div id="status-badge" class="status-badge unknown">🅿️</div>
+        <div id="status-text" class="status-text unknown">—</div>
+        <div id="confidence-badge" class="confidence-badge">
+          <span class="confidence-dot low" id="conf-dot"></span>
+          <span id="conf-label">—</span>
+        </div>
+        <div id="status-desc" class="status-desc">Loading…</div>
+        <div id="countdown" class="countdown-pill">
+          <span class="spinner" style="width:12px;height:12px;border-width:1.5px"></span>
+          Refreshing…
+        </div>
+      </div>
+
+      <div class="card">
+        <div id="last-checked" class="meta-row">
+          <span class="meta-label">Last checked</span>
+          <span class="meta-value" id="last-check-val">—</span>
+        </div>
+        <div class="meta-row">
+          <span class="meta-label">Uptime</span>
+          <span class="meta-value"><span class="uptime-chip"><span class="uptime-dot"></span><span id="uptime-val">—</span></span></span>
+        </div>
+      </div>
+
+      <button class="btn btn-primary" id="btn-check-now">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="width:20px;height:20px"><path d="M1 4v6h6M23 20v-6h-6"/><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"/></svg>
+        Check Now
+      </button>
+    </div>
+
+    <!-- ── Screen 2: Heatmap ── -->
+    <div class="screen" id="screen-heatmap">
+      <div class="screen-title">Analytics</div>
+      <div id="heatmap-error" class="error-banner" style="display:none"></div>
+
+      <div class="card">
+        <div class="card-title">24-Hour Free Space Pattern</div>
+        <div class="heatmap-grid" id="heatmap-grid"></div>
+        <div class="heatmap-legend">
+          <span>Busy</span>
+          <div class="legend-grad"></div>
+          <span>Free</span>
+        </div>
+      </div>
+
+      <div class="stat-grid" id="stat-grid">
+        <div class="stat-pill">
+          <div class="stat-pill-val green" id="stat-free-pct">—</div>
+          <div class="stat-pill-label">Free %</div>
+        </div>
+        <div class="stat-pill">
+          <div class="stat-pill-val red" id="stat-occ-pct">—</div>
+          <div class="stat-pill-label">Occupied %</div>
+        </div>
+        <div class="stat-pill">
+          <div class="stat-pill-val" id="stat-total">—</div>
+          <div class="stat-pill-label">Total checks</div>
+        </div>
+        <div class="stat-pill">
+          <div class="stat-pill-val" id="stat-days">—</div>
+          <div class="stat-pill-label">Days of data</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Patterns</div>
+        <div class="meta-row">
+          <span class="meta-label">🕐 Busiest hours</span>
+          <span class="meta-value" id="busiest-hours">—</span>
+        </div>
+        <div class="meta-row">
+          <span class="meta-label">🕐 Freest hours</span>
+          <span class="meta-value" id="freest-hours">—</span>
+        </div>
+        <div class="meta-row">
+          <span class="meta-label">🔄 State changes (24h)</span>
+          <span class="meta-value" id="state-changes">—</span>
+        </div>
+        <div class="meta-row">
+          <span class="meta-label">📋 Checks (24h)</span>
+          <span class="meta-value" id="checks-24h">—</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Screen 3: Street Scan ── -->
+    <div class="screen" id="screen-scan">
+      <div class="screen-title">Street Scan</div>
+      <div id="scan-error" class="error-banner" style="display:none"></div>
+
+      <button class="btn btn-primary" id="btn-scan" style="margin-bottom:16px">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="width:20px;height:20px"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+        Scan Street Now
+      </button>
+
+      <div id="scan-loading" class="loading-overlay" style="display:none">
+        <div class="spinner"></div>
+        <span>Scanning… this takes 30–60 seconds</span>
+      </div>
+
+      <div class="card" id="scan-results-card" style="display:none">
+        <div class="card-title">Scan Results</div>
+        <div id="scan-results"></div>
+      </div>
+
+      <div class="card" id="scan-empty">
+        <div style="text-align:center;color:var(--text2);padding:20px 0">
+          <div style="font-size:36px;margin-bottom:8px">🔍</div>
+          <div style="font-size:15px">Tap "Scan Street Now" to check<br>all available spaces</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Screen 4: Camera ── -->
+    <div class="screen" id="screen-camera">
+      <div class="screen-title">Camera</div>
+      <div id="camera-error" class="error-banner" style="display:none"></div>
+
+      <div class="card" style="padding:0;overflow:hidden;margin-bottom:12px">
+        <div class="snapshot-wrap">
+          <img id="snapshot-img" alt="Camera snapshot" style="display:none">
+          <div class="snapshot-placeholder" id="snapshot-placeholder">
+            <div style="font-size:36px;margin-bottom:8px">📷</div>
+            <div>Tap Refresh to load snapshot</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="toggle-row">
+          <span class="toggle-label">Auto-refresh (10s)</span>
+          <label class="toggle">
+            <input type="checkbox" id="auto-refresh-toggle">
+            <span class="toggle-track"></span>
+          </label>
+        </div>
+        <div class="meta-row" id="snapshot-time-row" style="display:none">
+          <span class="meta-label">Captured</span>
+          <span class="meta-value" id="snapshot-time">—</span>
+        </div>
+      </div>
+
+      <button class="btn btn-secondary" id="btn-refresh-snapshot">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="width:18px;height:18px"><path d="M1 4v6h6M23 20v-6h-6"/><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"/></svg>
+        Refresh Snapshot
+      </button>
+    </div>
+
+    <!-- ── Screen 5: Settings ── -->
+    <div class="screen" id="screen-settings">
+      <div class="screen-title">Settings</div>
+      <div id="settings-error" class="error-banner" style="display:none"></div>
+
+      <div class="card settings-section">
+        <div class="card-title">System Health</div>
+        <div class="meta-row">
+          <span class="meta-label">📷 Camera</span>
+          <span class="meta-value" id="health-camera">—</span>
+        </div>
+        <div class="meta-row">
+          <span class="meta-label">🗄 Database</span>
+          <span class="meta-value" id="health-db">—</span>
+        </div>
+        <div class="meta-row">
+          <span class="meta-label">⏱ Uptime</span>
+          <span class="meta-value" id="health-uptime">—</span>
+        </div>
+      </div>
+
+      <div class="card settings-section">
+        <div class="card-title">Monitoring</div>
+        <div class="meta-row">
+          <span class="meta-label">Check interval</span>
+          <span class="meta-value" id="cfg-interval">—</span>
+        </div>
+        <div class="meta-row">
+          <span class="meta-label">Confidence threshold</span>
+          <span class="meta-value" id="cfg-confidence">—</span>
+        </div>
+        <div class="meta-row">
+          <span class="meta-label">Quiet hours</span>
+          <span class="meta-value" id="cfg-quiet">—</span>
+        </div>
+      </div>
+
+      <div class="card settings-section">
+        <div class="card-title">Parking Zone</div>
+        <div class="meta-row">
+          <span class="meta-label">Top / Bottom</span>
+          <span class="meta-value" id="cfg-zone-tb">—</span>
+        </div>
+        <div class="meta-row">
+          <span class="meta-label">Left / Right</span>
+          <span class="meta-value" id="cfg-zone-lr">—</span>
+        </div>
+        <div class="meta-row">
+          <span class="meta-label">Parking side</span>
+          <span class="meta-value" id="cfg-side">—</span>
+        </div>
+        <div class="meta-row">
+          <span class="meta-label">Opposite restriction</span>
+          <span class="meta-value" id="cfg-opp">—</span>
+        </div>
+      </div>
+
+      <div class="card settings-section">
+        <div class="card-title">Scan Positions</div>
+        <div class="meta-row">
+          <span class="meta-label">Home angle</span>
+          <span class="meta-value" id="cfg-home">—</span>
+        </div>
+        <div class="meta-row">
+          <span class="meta-label">Scan angles</span>
+          <span class="meta-value" id="cfg-scan-pos">—</span>
+        </div>
+      </div>
+
+      <div class="card settings-section">
+        <div class="card-title">API Access</div>
+        <button class="btn btn-secondary" id="btn-set-api-key" style="margin-top:4px">
+          🔑 Set API Key
+        </button>
+        <button class="btn btn-secondary" id="btn-clear-api-key" style="margin-top:8px">
+          🗑 Clear API Key
+        </button>
+      </div>
+
+      <div style="text-align:center;padding:16px 0 8px;font-size:12px;color:var(--text3)">
+        Smart Parking Monitor · v1.0
+      </div>
+    </div>
+
+  </div><!-- /screens -->
+
+  <!-- ── Tab Bar ── -->
+  <nav id="tab-bar">
+    <button class="tab-btn active" data-tab="home">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+      <span class="tab-label">Home</span>
+    </button>
+    <button class="tab-btn" data-tab="heatmap">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+      <span class="tab-label">Analytics</span>
+    </button>
+    <button class="tab-btn" data-tab="scan">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+      <span class="tab-label">Scan</span>
+    </button>
+    <button class="tab-btn" data-tab="camera">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+      <span class="tab-label">Camera</span>
+    </button>
+    <button class="tab-btn" data-tab="settings">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      <span class="tab-label">Settings</span>
+    </button>
+  </nav>
+</div><!-- /app -->
+
+<!-- ── API Key Modal ── -->
+<div id="api-key-modal">
+  <div class="modal-sheet">
+    <div class="modal-title">API Key</div>
+    <div class="modal-desc">Enter the API key configured on your Pi (API_KEY in .env). Leave blank if not set.</div>
+    <input type="password" class="text-input" id="api-key-input" placeholder="sk-...">
+    <button class="btn btn-primary" id="btn-save-api-key">Save & Reload</button>
+    <button class="btn btn-secondary" id="btn-cancel-api-key" style="margin-top:8px">Cancel</button>
+  </div>
+</div>
+
+<script>
+/* =========================================================
+   App State
+   ========================================================= */
+const state = {
+  currentTab: 'home',
+  apiKey: sessionStorage.getItem('pm_api_key') || '',
+  checkInterval: 180,
+  countdownTimer: null,
+  autoRefreshTimer: null,
+  statusLoaded: false,
+};
+
+/* =========================================================
+   Utilities
+   ========================================================= */
+function apiHeaders() {
+  const h = { 'Accept': 'application/json' };
+  if (state.apiKey) h['X-API-Key'] = state.apiKey;
+  return h;
+}
+
+async function apiFetch(path) {
+  const resp = await fetch(path, { headers: apiHeaders() });
+  if (resp.status === 401) {
+    showApiKeyModal();
+    throw new Error('Unauthorized — please enter API key');
+  }
+  if (!resp.ok) {
+    const txt = await resp.text().catch(() => '');
+    throw new Error(`HTTP ${resp.status}: ${txt.slice(0, 120)}`);
+  }
+  return resp.json();
+}
+
+function formatUptime(seconds) {
+  if (seconds < 60) return `${seconds}s`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`;
+  return `${Math.floor(seconds / 86400)}d ${Math.floor((seconds % 86400) / 3600)}h`;
+}
+
+function formatTimestamp(ts) {
+  if (!ts) return '—';
+  try {
+    // SQLite CURRENT_TIMESTAMP stores UTC as "YYYY-MM-DD HH:MM:SS" (no tz marker).
+    // ISO strings from live endpoints already include timezone info.
+    let iso = ts;
+    if (!ts.includes('T') && !ts.includes('+') && !ts.endsWith('Z')) {
+      // Plain SQLite UTC timestamp — add T separator and Z suffix
+      iso = ts.replace(' ', 'T') + 'Z';
+    }
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return ts;
+    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) +
+      ' · ' + d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+  } catch { return ts; }
+}
+
+function showError(id, msg) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.style.display = msg ? 'block' : 'none';
+  el.textContent = msg || '';
+}
+
+/* =========================================================
+   Tab navigation
+   ========================================================= */
+document.querySelectorAll('.tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const tab = btn.dataset.tab;
+    if (tab === state.currentTab) return;
+    state.currentTab = tab;
+
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+
+    document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+    document.getElementById('screen-' + tab).classList.add('active');
+
+    // Lazy-load content on first visit
+    if (tab === 'heatmap') loadHeatmap();
+    if (tab === 'settings') loadSettings();
+  });
+});
+
+/* =========================================================
+   Screen 1: Home / Status
+   ========================================================= */
+async function loadStatus(force = false) {
+  showError('home-error', '');
+  try {
+    const data = await apiFetch('/status/json');
+    renderStatus(data);
+    state.statusLoaded = true;
+  } catch (err) {
+    showError('home-error', `Could not load status: ${err.message}`);
+  }
+  loadHealth();
+  startCountdown();
+}
+
+function renderStatus(data) {
+  const status = (data.status || 'UNKNOWN').toUpperCase();
+  const conf = data.confidence || 'low';
+  const desc = data.description || '';
+  const ts = data.timestamp || '';
+
+  const badge = document.getElementById('status-badge');
+  const text = document.getElementById('status-text');
+  badge.className = 'status-badge ' + status.toLowerCase();
+  text.className = 'status-text ' + status.toLowerCase();
+
+  if (status === 'FREE') { badge.textContent = '🅿️'; text.textContent = 'FREE'; }
+  else if (status === 'OCCUPIED') { badge.textContent = '🚗'; text.textContent = 'OCCUPIED'; }
+  else { badge.textContent = '❓'; text.textContent = 'UNKNOWN'; }
+
+  document.getElementById('conf-dot').className = 'confidence-dot ' + conf;
+  document.getElementById('conf-label').textContent = conf + ' confidence';
+  document.getElementById('status-desc').textContent = desc || 'No description available.';
+  document.getElementById('last-check-val').textContent = formatTimestamp(ts);
+}
+
+async function loadHealth() {
+  try {
+    const h = await apiFetch('/health');
+    const uptime = h.uptime_seconds || 0;
+    document.getElementById('uptime-val').textContent = formatUptime(uptime);
+    // also update settings tab
+    document.getElementById('health-camera').textContent = h.camera === 'ok' ? '✅ ok' : `⚠️ ${h.camera}`;
+    document.getElementById('health-db').textContent = h.database === 'ok' ? '✅ ok' : `⚠️ ${h.database}`;
+    document.getElementById('health-uptime').textContent = formatUptime(uptime);
+  } catch (_) {}
+}
+
+function startCountdown() {
+  clearInterval(state.countdownTimer);
+  let remaining = state.checkInterval;
+  const el = document.getElementById('countdown');
+  el.innerHTML = `<span style="font-size:12px">🔄</span> Refreshing in <strong>${remaining}s</strong>`;
+
+  state.countdownTimer = setInterval(() => {
+    remaining--;
+    if (remaining <= 0) {
+      clearInterval(state.countdownTimer);
+      el.innerHTML = `<span class="spinner" style="width:12px;height:12px;border-width:1.5px"></span> Checking…`;
+      loadStatus();
+    } else {
+      el.innerHTML = `<span style="font-size:12px">🔄</span> Refreshing in <strong>${remaining}s</strong>`;
+    }
+  }, 1000);
+}
+
+document.getElementById('btn-check-now').addEventListener('click', () => {
+  clearInterval(state.countdownTimer);
+  document.getElementById('countdown').innerHTML =
+    `<span class="spinner" style="width:12px;height:12px;border-width:1.5px"></span> Checking…`;
+  loadStatus(true);
+});
+
+/* =========================================================
+   Screen 2: Heatmap / Analytics
+   ========================================================= */
+let heatmapLoaded = false;
+
+async function loadHeatmap() {
+  if (heatmapLoaded) return;
+  showError('heatmap-error', '');
+  try {
+    const data = await apiFetch('/history');
+    renderHeatmap(data);
+    heatmapLoaded = true;
+  } catch (err) {
+    showError('heatmap-error', `Could not load history: ${err.message}`);
+  }
+}
+
+function heatColor(freePct) {
+  // free_pct 0→red, 50→yellow, 100→green
+  // Use HSL: 0=red, 48=yellow, 142=green
+  const hue = Math.round(freePct * 1.42);
+  const sat = freePct === 0 ? 30 : 65;
+  const lit = 35 + freePct * 0.12;
+  return `hsl(${hue},${sat}%,${lit}%)`;
+}
+
+function renderHeatmap(data) {
+  const hours = data.hours || [];
+  const stats = data.stats || {};
+  const grid = document.getElementById('heatmap-grid');
+  grid.innerHTML = '';
+
+  hours.forEach(h => {
+    const cell = document.createElement('div');
+    cell.className = 'heatmap-cell';
+    const pct = h.free_percentage || 0;
+    cell.style.background = h.total === 0 ? 'var(--surface2)' : heatColor(pct);
+    cell.title = `${String(h.hour).padStart(2,'0')}:00 — ${pct}% free (${h.total} checks)`;
+    const lbl = document.createElement('div');
+    lbl.className = 'cell-label';
+    lbl.textContent = String(h.hour).padStart(2, '0');
+    cell.appendChild(lbl);
+    grid.appendChild(cell);
+  });
+
+  document.getElementById('stat-free-pct').textContent =
+    (stats.free_percentage || 0).toFixed(1) + '%';
+  document.getElementById('stat-occ-pct').textContent =
+    (stats.occupied_percentage || 0).toFixed(1) + '%';
+  document.getElementById('stat-total').textContent = stats.total_checks || 0;
+  document.getElementById('stat-days').textContent = stats.days_of_data || 0;
+
+  const busiest = (stats.busiest_hours || []).map(h => `${String(h.hour).padStart(2,'0')}:00`).join(', ') || '—';
+  const freest = (stats.freest_hours || []).map(h => `${String(h.hour).padStart(2,'0')}:00`).join(', ') || '—';
+  document.getElementById('busiest-hours').textContent = busiest;
+  document.getElementById('freest-hours').textContent = freest;
+  document.getElementById('state-changes').textContent = stats.state_changes_last_24h || 0;
+  document.getElementById('checks-24h').textContent = stats.checks_last_24h || 0;
+}
+
+/* =========================================================
+   Screen 3: Street Scan
+   ========================================================= */
+document.getElementById('btn-scan').addEventListener('click', runScan);
+
+async function runScan() {
+  const btn = document.getElementById('btn-scan');
+  btn.disabled = true;
+  document.getElementById('scan-loading').style.display = 'flex';
+  document.getElementById('scan-results-card').style.display = 'none';
+  document.getElementById('scan-empty').style.display = 'none';
+  showError('scan-error', '');
+
+  try {
+    const data = await apiFetch('/scan/json');
+    renderScanResults(data);
+  } catch (err) {
+    showError('scan-error', `Scan failed: ${err.message}`);
+    document.getElementById('scan-empty').style.display = 'block';
+  } finally {
+    btn.disabled = false;
+    document.getElementById('scan-loading').style.display = 'none';
+  }
+}
+
+function renderScanResults(data) {
+  const positions = data.positions || [];
+  const container = document.getElementById('scan-results');
+  container.innerHTML = '';
+
+  if (!positions.length) {
+    container.innerHTML = '<div style="text-align:center;color:var(--text2);padding:16px">No positions scanned.</div>';
+  } else {
+    positions.forEach(pos => {
+      const status = (pos.status || 'UNKNOWN').toLowerCase();
+      const icon = status === 'free' ? '🅿️' : status === 'occupied' ? '🚗' : '❓';
+      const div = document.createElement('div');
+      div.className = 'position-card';
+      div.innerHTML = `
+        <div class="position-icon ${status}">${icon}</div>
+        <div class="position-info">
+          <div class="position-name">${pos.position_name || pos.angle + '°'}</div>
+          <div class="position-desc">${pos.description || ''}</div>
+        </div>
+        <span class="position-badge ${status}">${pos.status || 'UNKNOWN'}</span>
+      `;
+      container.appendChild(div);
+    });
+  }
+
+  document.getElementById('scan-results-card').style.display = 'block';
+}
+
+/* =========================================================
+   Screen 4: Camera
+   ========================================================= */
+async function loadSnapshot() {
+  const img = document.getElementById('snapshot-img');
+  const placeholder = document.getElementById('snapshot-placeholder');
+  const timeRow = document.getElementById('snapshot-time-row');
+  showError('camera-error', '');
+
+  try {
+    // Fetch as blob to avoid auth issues with <img src>
+    const resp = await fetch('/snapshot', { headers: apiHeaders() });
+    if (resp.status === 401) { showApiKeyModal(); return; }
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const blob = await resp.blob();
+    const url = URL.createObjectURL(blob);
+    // Revoke previous object URL
+    if (img.src && img.src.startsWith('blob:')) URL.revokeObjectURL(img.src);
+    img.src = url;
+    img.style.display = 'block';
+    placeholder.style.display = 'none';
+    timeRow.style.display = 'flex';
+    document.getElementById('snapshot-time').textContent = new Date().toLocaleTimeString();
+  } catch (err) {
+    showError('camera-error', `Could not load snapshot: ${err.message}`);
+    img.style.display = 'none';
+    placeholder.style.display = 'flex';
+  }
+}
+
+document.getElementById('btn-refresh-snapshot').addEventListener('click', loadSnapshot);
+
+document.getElementById('auto-refresh-toggle').addEventListener('change', function() {
+  clearInterval(state.autoRefreshTimer);
+  if (this.checked) {
+    loadSnapshot();
+    state.autoRefreshTimer = setInterval(loadSnapshot, 10000);
+  }
+});
+
+/* =========================================================
+   Screen 5: Settings
+   ========================================================= */
+async function loadSettings() {
+  showError('settings-error', '');
+  loadHealth();
+  try {
+    const cfg = await apiFetch('/config');
+    document.getElementById('cfg-interval').textContent =
+      (cfg.check_interval || 180) + 's';
+    document.getElementById('cfg-confidence').textContent =
+      cfg.confidence_threshold || '—';
+    document.getElementById('cfg-quiet').textContent =
+      `${String(cfg.quiet_hours_start).padStart(2,'0')}:00 – ${String(cfg.quiet_hours_end).padStart(2,'0')}:00`;
+    document.getElementById('cfg-zone-tb').textContent =
+      `${cfg.parking_zone_top}% – ${cfg.parking_zone_bottom}%`;
+    document.getElementById('cfg-zone-lr').textContent =
+      `${cfg.parking_zone_left}% – ${cfg.parking_zone_right}%`;
+    document.getElementById('cfg-side').textContent =
+      cfg.street_parking_side || '—';
+    document.getElementById('cfg-opp').textContent =
+      (cfg.opposite_side_restriction || '—').replace(/_/g, ' ');
+    document.getElementById('cfg-home').textContent =
+      (cfg.home_position || 0) + '°';
+    document.getElementById('cfg-scan-pos').textContent =
+      (cfg.scan_positions || []).map(p => p + '°').join(', ') || '—';
+    // Update auto-refresh interval
+    if (cfg.check_interval) state.checkInterval = cfg.check_interval;
+  } catch (err) {
+    showError('settings-error', `Could not load config: ${err.message}`);
+  }
+}
+
+/* =========================================================
+   API Key Modal
+   ========================================================= */
+function showApiKeyModal() {
+  document.getElementById('api-key-input').value = state.apiKey;
+  document.getElementById('api-key-modal').classList.add('show');
+}
+
+function hideApiKeyModal() {
+  document.getElementById('api-key-modal').classList.remove('show');
+}
+
+document.getElementById('btn-set-api-key').addEventListener('click', showApiKeyModal);
+
+document.getElementById('btn-clear-api-key').addEventListener('click', () => {
+  state.apiKey = '';
+  sessionStorage.removeItem('pm_api_key');
+  heatmapLoaded = false;
+  loadStatus();
+});
+
+document.getElementById('btn-save-api-key').addEventListener('click', () => {
+  const key = document.getElementById('api-key-input').value.trim();
+  state.apiKey = key;
+  if (key) sessionStorage.setItem('pm_api_key', key);
+  else sessionStorage.removeItem('pm_api_key');
+  hideApiKeyModal();
+  heatmapLoaded = false;
+  loadStatus();
+  if (state.currentTab === 'settings') loadSettings();
+});
+
+document.getElementById('btn-cancel-api-key').addEventListener('click', hideApiKeyModal);
+
+// Close modal on backdrop tap
+document.getElementById('api-key-modal').addEventListener('click', function(e) {
+  if (e.target === this) hideApiKeyModal();
+});
+
+/* =========================================================
+   Service Worker registration
+   ========================================================= */
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch(() => {});
+  });
+}
+
+/* =========================================================
+   Bootstrap
+   ========================================================= */
+(async function init() {
+  // Fetch config first so we have the correct check interval
+  try {
+    const cfg = await apiFetch('/config');
+    if (cfg.check_interval) state.checkInterval = cfg.check_interval;
+  } catch (_) {}
+  loadStatus();
+})();
+</script>
+</body>
+</html>
