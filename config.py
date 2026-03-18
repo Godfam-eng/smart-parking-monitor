@@ -62,6 +62,7 @@ class Config:
     # --- HTTP API Server ---
     API_HOST: str = "0.0.0.0"
     API_PORT: int = 8080
+    API_KEY: str = ""
 
     # --- Database ---
     DB_PATH: str = "parking_history.db"
@@ -84,6 +85,24 @@ def _parse_scan_positions(raw: str) -> List[int]:
         return _defaults
 
 
+def _safe_int(name: str, raw: str, default: int) -> int:
+    """Parse *raw* as int, logging a warning and returning *default* on failure."""
+    try:
+        return int(raw)
+    except (ValueError, TypeError):
+        logger.warning("Invalid value for %s='%s' — using default %d", name, raw, default)
+        return default
+
+
+def _safe_float(name: str, raw: str, default: float) -> float:
+    """Parse *raw* as float, logging a warning and returning *default* on failure."""
+    try:
+        return float(raw)
+    except (ValueError, TypeError):
+        logger.warning("Invalid value for %s='%s' — using default %s", name, raw, default)
+        return default
+
+
 def load_config() -> Config:
     """Create and return a Config instance populated from environment variables."""
     raw_positions = os.getenv("SCAN_POSITIONS", "-60,-30,0,30,60")
@@ -91,37 +110,39 @@ def load_config() -> Config:
         TAPO_IP=os.getenv("TAPO_IP", ""),
         TAPO_USER=os.getenv("TAPO_USER", ""),
         TAPO_PASSWORD=os.getenv("TAPO_PASSWORD", ""),
-        TAPO_RTSP_PORT=int(os.getenv("TAPO_RTSP_PORT", "554")),
+        TAPO_RTSP_PORT=_safe_int("TAPO_RTSP_PORT", os.getenv("TAPO_RTSP_PORT", "554"), 554),
         TAPO_STREAM_PATH=os.getenv("TAPO_STREAM_PATH", "stream1"),
         ANTHROPIC_API_KEY=os.getenv("ANTHROPIC_API_KEY", ""),
         CLAUDE_MODEL=os.getenv("CLAUDE_MODEL", "claude-sonnet-4-20250514"),
-        CLAUDE_MAX_TOKENS=int(os.getenv("CLAUDE_MAX_TOKENS", "1024")),
+        CLAUDE_MAX_TOKENS=_safe_int("CLAUDE_MAX_TOKENS", os.getenv("CLAUDE_MAX_TOKENS", "1024"), 1024),
         TELEGRAM_BOT_TOKEN=os.getenv("TELEGRAM_BOT_TOKEN", ""),
         TELEGRAM_CHAT_ID=os.getenv("TELEGRAM_CHAT_ID", ""),
         PUSHOVER_USER_KEY=os.getenv("PUSHOVER_USER_KEY", ""),
         PUSHOVER_API_TOKEN=os.getenv("PUSHOVER_API_TOKEN", ""),
-        CHECK_INTERVAL=int(os.getenv("CHECK_INTERVAL", "180")),
+        CHECK_INTERVAL=_safe_int("CHECK_INTERVAL", os.getenv("CHECK_INTERVAL", "180"), 180),
         CONFIDENCE_THRESHOLD=os.getenv("CONFIDENCE_THRESHOLD", "medium"),
-        QUIET_HOURS_START=int(os.getenv("QUIET_HOURS_START", "23")),
-        QUIET_HOURS_END=int(os.getenv("QUIET_HOURS_END", "7")),
-        PARKING_ZONE_TOP=int(os.getenv("PARKING_ZONE_TOP", "30")),
-        PARKING_ZONE_BOTTOM=int(os.getenv("PARKING_ZONE_BOTTOM", "80")),
-        PARKING_ZONE_LEFT=int(os.getenv("PARKING_ZONE_LEFT", "20")),
-        PARKING_ZONE_RIGHT=int(os.getenv("PARKING_ZONE_RIGHT", "80")),
+        QUIET_HOURS_START=_safe_int("QUIET_HOURS_START", os.getenv("QUIET_HOURS_START", "23"), 23),
+        QUIET_HOURS_END=_safe_int("QUIET_HOURS_END", os.getenv("QUIET_HOURS_END", "7"), 7),
+        PARKING_ZONE_TOP=_safe_int("PARKING_ZONE_TOP", os.getenv("PARKING_ZONE_TOP", "30"), 30),
+        PARKING_ZONE_BOTTOM=_safe_int("PARKING_ZONE_BOTTOM", os.getenv("PARKING_ZONE_BOTTOM", "80"), 80),
+        PARKING_ZONE_LEFT=_safe_int("PARKING_ZONE_LEFT", os.getenv("PARKING_ZONE_LEFT", "20"), 20),
+        PARKING_ZONE_RIGHT=_safe_int("PARKING_ZONE_RIGHT", os.getenv("PARKING_ZONE_RIGHT", "80"), 80),
         SCAN_POSITIONS=_parse_scan_positions(raw_positions),
-        HOME_POSITION=int(os.getenv("HOME_POSITION", "0")),
-        SCAN_SETTLE_TIME=float(os.getenv("SCAN_SETTLE_TIME", "2.5")),
+        HOME_POSITION=_safe_int("HOME_POSITION", os.getenv("HOME_POSITION", "0"), 0),
+        SCAN_SETTLE_TIME=_safe_float("SCAN_SETTLE_TIME", os.getenv("SCAN_SETTLE_TIME", "2.5"), 2.5),
         API_HOST=os.getenv("API_HOST", "0.0.0.0"),
-        API_PORT=int(os.getenv("API_PORT", "8080")),
+        API_PORT=_safe_int("API_PORT", os.getenv("API_PORT", "8080"), 8080),
+        API_KEY=os.getenv("API_KEY", ""),
         DB_PATH=os.getenv("DB_PATH", "parking_history.db"),
-        HOME_LAT=float(os.getenv("HOME_LAT", "0.0")),
-        HOME_LON=float(os.getenv("HOME_LON", "0.0")),
+        HOME_LAT=_safe_float("HOME_LAT", os.getenv("HOME_LAT", "0.0"), 0.0),
+        HOME_LON=_safe_float("HOME_LON", os.getenv("HOME_LON", "0.0"), 0.0),
     )
 
 
 def validate(config: Config) -> bool:
     """
-    Validate that all required configuration keys are present.
+    Validate that all required configuration keys are present and numeric values
+    are within acceptable ranges.
 
     Returns True if valid, False otherwise.
     Prints clear error messages for any missing required keys.
@@ -145,6 +166,31 @@ def validate(config: Config) -> bool:
         )
         return False
 
+    # Numeric range checks
+    range_errors = []
+
+    if not 0 <= config.TAPO_RTSP_PORT <= 65535:
+        range_errors.append(f"TAPO_RTSP_PORT={config.TAPO_RTSP_PORT} must be 0–65535")
+    if not 0 <= config.API_PORT <= 65535:
+        range_errors.append(f"API_PORT={config.API_PORT} must be 0–65535")
+    if not 0 <= config.QUIET_HOURS_START <= 23:
+        range_errors.append(f"QUIET_HOURS_START={config.QUIET_HOURS_START} must be 0–23")
+    if not 0 <= config.QUIET_HOURS_END <= 23:
+        range_errors.append(f"QUIET_HOURS_END={config.QUIET_HOURS_END} must be 0–23")
+    for zone_name, zone_val in (
+        ("PARKING_ZONE_TOP", config.PARKING_ZONE_TOP),
+        ("PARKING_ZONE_BOTTOM", config.PARKING_ZONE_BOTTOM),
+        ("PARKING_ZONE_LEFT", config.PARKING_ZONE_LEFT),
+        ("PARKING_ZONE_RIGHT", config.PARKING_ZONE_RIGHT),
+    ):
+        if not 0 <= zone_val <= 100:
+            range_errors.append(f"{zone_name}={zone_val} must be 0–100")
+
+    if range_errors:
+        for err in range_errors:
+            logger.error("Configuration range error: %s", err)
+        return False
+
     # Warn about optional-but-recommended keys
     recommended = {
         "PUSHOVER_USER_KEY": config.PUSHOVER_USER_KEY,
@@ -153,6 +199,9 @@ def validate(config: Config) -> bool:
     for key, value in recommended.items():
         if not value:
             logger.warning("Recommended configuration not set: %s (Pushover notifications disabled)", key)
+
+    if not config.API_KEY:
+        logger.warning("API_KEY not set — HTTP API is unauthenticated (set API_KEY in .env to enable)")
 
     logger.info("Configuration validated successfully.")
     return True

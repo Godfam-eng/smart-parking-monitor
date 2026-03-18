@@ -6,6 +6,7 @@ Handles RTSP streaming via OpenCV and pan/tilt control via pytapo.
 
 import logging
 import time
+import urllib.parse
 from typing import List, Optional
 
 import cv2
@@ -15,7 +16,7 @@ from config import Config
 
 logger = logging.getLogger(__name__)
 
-# Position labels keyed by rough pan angle range
+# Position labels keyed by rough pan angle range (low inclusive, high inclusive for last)
 _POSITION_LABELS = [
     (-90, -45, "far left"),
     (-45, -15, "left"),
@@ -28,9 +29,9 @@ _POSITION_LABELS = [
 def _angle_to_position_name(angle: int) -> str:
     """Convert a numeric pan angle to a human-readable position name."""
     for low, high, label in _POSITION_LABELS:
-        if low <= angle < high:
+        if low <= angle <= high:
             return label
-    return "far right" if angle >= 45 else "far left"
+    return "far right" if angle > 90 else "far left"
 
 
 class TapoCamera:
@@ -70,9 +71,11 @@ class TapoCamera:
     # ------------------------------------------------------------------
 
     def get_rtsp_url(self) -> str:
-        """Return the full RTSP URL for the camera stream."""
+        """Return the full RTSP URL for the camera stream (credentials URL-encoded)."""
+        user = urllib.parse.quote(self.config.TAPO_USER, safe="")
+        password = urllib.parse.quote(self.config.TAPO_PASSWORD, safe="")
         return (
-            f"rtsp://{self.config.TAPO_USER}:{self.config.TAPO_PASSWORD}"
+            f"rtsp://{user}:{password}"
             f"@{self.config.TAPO_IP}:{self.config.TAPO_RTSP_PORT}"
             f"/{self.config.TAPO_STREAM_PATH}"
         )

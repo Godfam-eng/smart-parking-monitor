@@ -6,8 +6,8 @@ with the parking system via Telegram. Compatible with python-telegram-bot v20+.
 """
 
 import asyncio
+import functools
 import logging
-import threading
 from typing import Optional
 
 from telegram import Update
@@ -39,6 +39,7 @@ _state: Optional[ParkingState] = None
 
 def _authorised(func):
     """Decorator: silently ignore updates from unauthorised chat IDs."""
+    @functools.wraps(func)
     async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if update.effective_chat is None:
             return

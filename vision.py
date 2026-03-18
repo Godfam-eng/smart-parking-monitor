@@ -8,7 +8,6 @@ import base64
 import json
 import logging
 import re
-from typing import Optional
 
 import anthropic
 

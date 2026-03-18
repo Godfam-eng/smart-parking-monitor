@@ -11,8 +11,7 @@ import signal
 import sys
 import threading
 import time
-from datetime import datetime
-from typing import Optional
+from datetime import datetime, timezone
 
 from config import load_config, validate
 from camera import TapoCamera
@@ -80,7 +79,7 @@ def _run_monitoring_loop(
         config.CONFIDENCE_THRESHOLD,
     )
 
-    last_cleanup = datetime.utcnow()
+    last_cleanup = datetime.now(timezone.utc)
 
     while not _shutdown_event.is_set():
         loop_start = time.monotonic()
@@ -99,18 +98,22 @@ def _run_monitoring_loop(
                 "Check: status=%s confidence=%s — %s", status, confidence, description
             )
 
-            # 3. Notify if state changed and confidence threshold met
+            # 3. Save previous status BEFORE recording the current check
+            previous = state.get_previous_status()
+
+            # 4. Record the current check first
+            state.record_check(status, confidence, description, angle=config.HOME_POSITION)
+
+            # 5. Notify if state changed and confidence threshold met.
+            #    Skip on the very first run (previous is None) to avoid a spurious alert.
             if status != "UNKNOWN" and _meets_threshold(confidence, config.CONFIDENCE_THRESHOLD):
-                if state.has_state_changed(status):
-                    logger.info("State change detected: → %s", status)
+                if previous is not None and previous != status:
+                    logger.info("State change detected: %s → %s", previous, status)
                     if status == "FREE":
                         notifications.notify_space_free(description, image_bytes)
                     elif status == "OCCUPIED":
                         notifications.notify_space_occupied(description, image_bytes)
-                    state.record_state_change(state.get_previous_status(), status, description)
-
-            # 4. Record check
-            state.record_check(status, confidence, description, angle=config.HOME_POSITION)
+                    state.record_state_change(previous, status, description)
 
         except Exception as exc:
             logger.error("Error in monitoring loop iteration: %s", exc, exc_info=True)
@@ -120,10 +123,10 @@ def _run_monitoring_loop(
                 pass
 
         # Daily cleanup
-        if (datetime.utcnow() - last_cleanup).days >= 1:
+        if (datetime.now(timezone.utc) - last_cleanup).days >= 1:
             try:
                 state.cleanup_old_records(days=90)
-                last_cleanup = datetime.utcnow()
+                last_cleanup = datetime.now(timezone.utc)
             except Exception as exc:
                 logger.warning("Cleanup failed: %s", exc)
 
