@@ -276,8 +276,11 @@ class AutoCalibrator:
         opposite_restriction = _majority_vote(restrictions, default="double_yellow")
 
         # Street description: from the highest-scoring angle
-        best = max(angle_scores, key=lambda s: s.get("usefulness_score", 0), default={})
-        street_description = best.get("description", "")
+        if angle_scores:
+            best = max(angle_scores, key=lambda s: s.get("usefulness_score", 0))
+            street_description = best.get("description", "")
+        else:
+            street_description = ""
 
         return CalibrationResult(
             timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),

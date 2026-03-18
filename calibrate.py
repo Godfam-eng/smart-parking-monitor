@@ -46,7 +46,7 @@ def _print_banner() -> None:
     print()
 
 
-def _generate_html(image_files: list, angle_scores: dict | None = None) -> str:
+def _generate_html(image_files: list, angle_scores: dict | None = None, min_usefulness: int | None = None) -> str:
     """Generate an HTML index page for the captured calibration images."""
     items = ""
     for filename, angle in image_files:
@@ -55,7 +55,8 @@ def _generate_html(image_files: list, angle_scores: dict | None = None) -> str:
             s = angle_scores[angle]
             score = s.get("usefulness_score", "?")
             desc = s.get("description", "")
-            color = "#4CAF50" if isinstance(score, int) and score >= 6 else "#FF5722"
+            threshold = min_usefulness if min_usefulness is not None else 6
+            color = "#4CAF50" if isinstance(score, int) and score >= threshold else "#FF5722"
             score_badge = (
                 f'<p style="color:{color}"><strong>Score: {score}/10</strong></p>'
                 f"<p><em>{desc}</em></p>"
@@ -179,7 +180,7 @@ def _run_ai_calibration(config, camera) -> None:
     if image_files:
         html_path = os.path.join(CALIBRATION_DIR, "index.html")
         with open(html_path, "w", encoding="utf-8") as f:
-            f.write(_generate_html(image_files, angle_score_map))
+            f.write(_generate_html(image_files, angle_score_map, config.CALIBRATION_MIN_USEFULNESS))
         print(f"Review page saved: {html_path}")
 
     print()

@@ -201,9 +201,10 @@ class ParkingVision:
         except json.JSONDecodeError:
             pass
 
-        # 2. Try ```json ... ``` or ``` ... ``` fences
+        # 2. Try ```json ... ``` or ``` ... ``` fences — use greedy match to
+        #    capture the entire JSON block including any nested structures.
         if data is None:
-            fence_pattern = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.DOTALL)
+            fence_pattern = re.compile(r"```(?:json)?\s*(\{.*\})\s*```", re.DOTALL)
             match = fence_pattern.search(stripped)
             if match:
                 try:
@@ -449,7 +450,7 @@ class ParkingVision:
             pass
 
         # 2. Try extracting from ```json ... ``` or ``` ... ``` fences
-        fence_pattern = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.DOTALL)
+        fence_pattern = re.compile(r"```(?:json)?\s*(\{.*\})\s*```", re.DOTALL)
         match = fence_pattern.search(stripped)
         if match:
             try:

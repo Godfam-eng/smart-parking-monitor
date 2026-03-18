@@ -309,7 +309,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await _send_stats_reply(update)
     elif any(kw in text for kw in ("calibrate", "recalibrate", "calibration")):
         await cmd_calibrate(update, context)
-    elif any(kw in text for kw in ("positions", "angles", "scan positions")):
+    elif any(kw in text for kw in ("positions", "angles")):
         await cmd_positions(update, context)
     else:
         await update.message.reply_text(

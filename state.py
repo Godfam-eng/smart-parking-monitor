@@ -436,11 +436,6 @@ class ParkingState:
     # Maintenance
     # ------------------------------------------------------------------
 
-    def close(self) -> None:
-        """Close the database connection."""
-        self._conn.close()
-        logger.debug("Database connection closed")
-
     def cleanup_old_records(self, days: int = 90) -> int:
         """
         Delete records older than *days* days from both tables.
@@ -472,5 +467,6 @@ class ParkingState:
 
     def close(self) -> None:
         """Close the database connection."""
-        self._conn.close()
+        with self._lock:
+            self._conn.close()
         logger.debug("Database connection closed")
