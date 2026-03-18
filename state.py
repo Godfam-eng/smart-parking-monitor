@@ -225,8 +225,10 @@ class ParkingState:
             ).fetchone()
             if first_row:
                 try:
+                    # SQLite stores timestamps as naive UTC strings; strip tz info for comparison
                     first_dt = datetime.strptime(first_row["timestamp"], "%Y-%m-%d %H:%M:%S")
-                    days_of_data = (datetime.now(timezone.utc).replace(tzinfo=None) - first_dt).days
+                    now_naive = datetime.now(timezone.utc).replace(tzinfo=None)
+                    days_of_data = (now_naive - first_dt).days
                 except ValueError:
                     days_of_data = 0
             else:
