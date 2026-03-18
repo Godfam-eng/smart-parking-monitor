@@ -7,6 +7,9 @@ StartLimitBurst=5
 
 [Service]
 Type=simple
+# IMPORTANT: If you chose a username other than 'pi' during Pi Imager setup,
+# replace every occurrence of 'pi' below with your actual username.
+# Run: whoami   on the Pi to confirm your username.
 User=pi
 Group=pi
 WorkingDirectory=/home/pi/smart-parking-monitor

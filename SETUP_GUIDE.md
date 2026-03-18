@@ -1,18 +1,24 @@
 # Smart Parking Monitor — Complete Setup Guide
 
-This guide takes you from zero to a fully operational parking monitor running 24/7 on a Raspberry Pi 5.
+This guide takes you from zero to a fully operational parking monitor running 24/7 on a Raspberry Pi 5 with a Tapo C225 camera.  Follow every step in order — each one is required for a working system.
 
 ---
 
 ## Pre-Arrival Checklist
 
-Before you start, create accounts and gather credentials for these services:
+Create accounts and gather credentials **before** you sit down at the Pi:
 
-- [ ] **Anthropic** — https://console.anthropic.com (Claude API key)
-- [ ] **Telegram** — Create a bot via [@BotFather](https://t.me/botfather), get token + chat ID
-- [ ] **Pushover** — https://pushover.net (user key + create an app for API token)
-- [ ] **Tailscale** — https://tailscale.com (free account, install on Pi and iPhone)
-- [ ] **Tapo C225** — Enable RTSP in the Tapo app: Camera Settings → Advanced → RTSP
+- [ ] **Anthropic** — https://console.anthropic.com → create an API key
+- [ ] **Telegram** — Create a bot via [@BotFather](https://t.me/botfather), note the token.  Send a message to your new bot so you can retrieve the chat ID later.
+- [ ] **Pushover** — https://pushover.net → copy your User Key, create an Application for the API Token
+- [ ] **Tailscale** — https://tailscale.com → free account, install on your iPhone now
+- [ ] **Tapo C225 — Camera Account** (most common first-time failure):
+  1. Open the **Tapo app** on your phone → tap the C225 camera tile
+  2. Tap ⚙️ → **Advanced Settings** → **Camera Account**
+  3. Create a dedicated **username** and **password** (write them down)
+  4. Also enable **RTSP**: ⚙️ → **Advanced Settings** → **RTSP** → toggle on
+
+  > ⚠️ These credentials are **NOT** your TP-Link cloud login.  The camera account is separate.
 
 ---
 
@@ -20,12 +26,15 @@ Before you start, create accounts and gather credentials for these services:
 
 1. Download [Raspberry Pi Imager](https://www.raspberrypi.com/software/)
 2. Choose **Raspberry Pi OS Lite (64-bit)** — no desktop needed
-3. Click the ⚙️ gear icon to configure:
-   - Enable SSH (use password authentication)
-   - Set username: `pi` and a strong password
-   - Set hostname: `parking-pi`
-   - Configure WiFi (or skip if using Ethernet)
-4. Flash the card and insert into Pi
+3. Click the **⚙️ gear / Edit Settings** icon and configure:
+   - **Hostname**: `parking-pi`
+   - **Enable SSH** → "Use password authentication"
+   - **Username**: `pi`  ← use exactly this if you want to follow the guide verbatim
+   - **Password**: a strong password of your choice
+   - **WiFi**: enter your SSID + password (or skip if using Ethernet)
+4. Flash, insert into Pi, power on
+
+> If you chose a different username, replace every `pi` path in this guide (and in `parking-monitor.service`) with your actual username.
 
 ---
 
@@ -35,18 +44,23 @@ Before you start, create accounts and gather credentials for these services:
 # From your Mac/PC on the same network:
 ssh pi@parking-pi.local
 
-# If hostname doesn't resolve, find the IP from your router and use:
+# If hostname doesn't resolve, find the Pi's IP in your router DHCP table:
 ssh pi@192.168.1.xxx
 ```
 
 ---
 
-## Step 3: System Updates
+## Step 3: System Updates and Dependencies
 
 ```bash
 sudo apt update && sudo apt upgrade -y
-sudo apt install -y python3-pip python3-venv python3-opencv git libopencv-dev
+
+# Python tools, OpenCV via apt (avoids 30-60 min ARM64 compile from pip),
+# and git
+sudo apt install -y python3-pip python3-venv python3-opencv git
 ```
+
+> **Why `python3-opencv` via apt?**  PyPI does not always provide pre-built ARM64 wheels for `opencv-python-headless`.  Compiling from source takes 30–60 minutes and often fails without extra build dependencies.  The apt package is pre-built for ARM64 and installs in seconds.
 
 ---
 
@@ -63,32 +77,75 @@ cd smart-parking-monitor
 ## Step 5: Python Environment
 
 ```bash
-python3 -m venv venv
+# --system-site-packages lets the venv see the apt-installed python3-opencv
+python3 -m venv --system-site-packages venv
 source venv/bin/activate
 pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
+> **Do NOT omit `--system-site-packages`.**  Without it the venv cannot see `cv2` and you will get `ModuleNotFoundError: No module named 'cv2'` at runtime.
+
 ---
 
-## Step 6: Configure
+## Step 6: Configure `.env`
 
 ```bash
 cp .env.example .env
 nano .env
 ```
 
-Fill in every value. At minimum:
-- `TAPO_IP` — Find this in your router's DHCP table or the Tapo app
-- `TAPO_USER` / `TAPO_PASSWORD` — Tapo account credentials
-- `ANTHROPIC_API_KEY` — From https://console.anthropic.com
-- `TELEGRAM_BOT_TOKEN` — From BotFather
-- `TELEGRAM_CHAT_ID` — Send a message to your bot, then visit:
-  `https://api.telegram.org/bot<TOKEN>/getUpdates` to find your chat ID
+Fill in every value.  Key fields:
+
+| Key | Where to find it |
+|-----|-----------------|
+| `TAPO_IP` | Router DHCP table or Tapo app → Device Info |
+| `TAPO_USER` | Camera Account username you created in Pre-Arrival step |
+| `TAPO_PASSWORD` | Camera Account password you created in Pre-Arrival step |
+| `ANTHROPIC_API_KEY` | https://console.anthropic.com |
+| `TELEGRAM_BOT_TOKEN` | From BotFather |
+| `TELEGRAM_CHAT_ID` | Send `/start` to your bot, then visit:<br>`https://api.telegram.org/bot<TOKEN>/getUpdates` |
+| `PUSHOVER_USER_KEY` | https://pushover.net → your User Key |
+| `PUSHOVER_API_TOKEN` | Pushover → Your Applications |
+
+Leave `API_KEY` blank if your Pi is behind Tailscale (the default setup).  Set it to a random secret if you ever expose the port to the internet.
 
 ---
 
-## Step 7: Calibrate the Camera
+## Step 7: Verify Camera Connectivity
+
+Before running the full system, confirm the camera is reachable:
+
+```bash
+source venv/bin/activate
+
+# Test pytapo connection
+python -c "
+from config import load_config
+from camera import TapoCamera
+cfg = load_config()
+cam = TapoCamera(cfg)
+cam.connect()
+print('Camera connected and calibrated OK')
+"
+
+# Test RTSP frame grab
+python -c "
+from config import load_config
+from camera import TapoCamera
+cfg = load_config()
+cam = TapoCamera(cfg)
+cam.connect()
+frame = cam.grab_frame()
+print(f'Frame captured: {len(frame)} bytes')
+"
+```
+
+If either command fails, see the **Troubleshooting** section at the bottom.
+
+---
+
+## Step 8: Calibrate the Camera
 
 With the camera positioned at your window:
 
@@ -97,53 +154,89 @@ source venv/bin/activate
 python calibrate.py
 ```
 
-This sweeps from -90° to +90° and saves images to `calibration/`.
+This will:
+1. Connect to the camera and drive it to the left end-stop (this is normal — it establishes a known position)
+2. Sweep from −90° to +90° and save a JPEG at each angle to `calibration/`
+3. Generate `calibration/index.html`
 
-Open `calibration/index.html` in a browser (copy the directory to your Mac with `scp`):
+Copy the directory to your Mac for review:
 
 ```bash
 # On your Mac:
 scp -r pi@parking-pi.local:~/smart-parking-monitor/calibration/ ~/Desktop/
 ```
 
-Open `~/Desktop/calibration/index.html` and note which angles show useful street coverage.
-Update `SCAN_POSITIONS` in `.env` accordingly.
+Open `~/Desktop/calibration/index.html`, note which angles show useful street coverage, then update `SCAN_POSITIONS` in `.env`:
+
+```bash
+nano .env
+# e.g. SCAN_POSITIONS=-60,-30,0,30,60
+```
 
 ---
 
-## Step 8: Test Components Individually
+## Step 9: Test Components Individually
 
 ```bash
-# Test camera connection
-python -c "from config import config; from camera import TapoCamera; c = TapoCamera(config); c.connect(); print('Camera OK:', len(c.grab_frame()), 'bytes')"
+source venv/bin/activate
 
-# Test Claude API
-python -c "from config import config; from vision import ParkingVision; v = ParkingVision(config); print('Vision OK')"
+# Test Claude vision API
+python -c "
+from config import load_config
+from vision import ParkingVision
+cfg = load_config()
+v = ParkingVision(cfg)
+print('Vision module OK')
+"
 
-# Test notifications
-python -c "from config import config; from notifications import NotificationManager; n = NotificationManager(config); n.notify_startup()"
-# Check Telegram for startup message
+# Test Telegram notification
+python -c "
+from config import load_config
+from notifications import NotificationManager
+cfg = load_config()
+n = NotificationManager(cfg)
+n.notify_startup()
+print('Telegram notification sent — check your phone')
+"
 
-# Run main loop (no bot/API, 1 check then Ctrl+C)
+# Validate full config
+python -c "
+from config import load_config, validate
+cfg = load_config()
+ok = validate(cfg)
+print('Config valid:', ok)
+"
+
+# Run one full monitoring cycle (Ctrl+C to stop after first check)
 python main.py --skip-bot --skip-api
 ```
 
 ---
 
-## Step 9: Install the systemd Service
+## Step 10: Pre-Flight Checklist
+
+Before enabling the systemd service, confirm every item:
+
+- [ ] `python -c "from config import load_config, validate; validate(load_config())"` prints `Config valid: True`
+- [ ] Camera connects and grabs a frame (Step 7)
+- [ ] `calibration/index.html` shows correct angles
+- [ ] Telegram received a startup notification (Step 9)
+- [ ] `python main.py --skip-bot --skip-api` runs without errors
+
+---
+
+## Step 11: Install the systemd Service
 
 ```bash
-# Install the service file
-sudo cp parking-monitor.service /etc/systemd/system/
+# If you used a username other than 'pi', edit the service file first:
+# nano parking-monitor.service  (replace 'pi' with your username on all 4 lines)
 
-# Reload systemd and enable on boot
+sudo cp parking-monitor.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable parking-monitor
-
-# Start it now
 sudo systemctl start parking-monitor
 
-# Check it's running
+# Verify it started successfully
 sudo systemctl status parking-monitor
 
 # Watch live logs
@@ -152,10 +245,10 @@ sudo journalctl -u parking-monitor -f
 
 ---
 
-## Step 10: Set Up Tailscale
+## Step 12: Set Up Tailscale
 
 ```bash
-# Install Tailscale on Pi
+# Install Tailscale on the Pi
 curl -fsSL https://tailscale.com/install.sh | sh
 sudo tailscale up
 
@@ -163,35 +256,35 @@ sudo tailscale up
 tailscale ip -4
 ```
 
-Install Tailscale on your iPhone from the App Store and sign in with the same account.
+Install **Tailscale** on your iPhone from the App Store and sign in with the same account.
 
-Test from iPhone (over 4G, not WiFi):
+Test from iPhone (turn off WiFi first, use cellular):
 ```
 http://100.x.y.z:8080/status
 ```
 
 ---
 
-## Step 11: Create the Siri Shortcut
+## Step 13: Create the Siri Shortcut
 
 See [docs/SIRI_SHORTCUT_GUIDE.md](docs/SIRI_SHORTCUT_GUIDE.md) for full instructions.
 
 Quick version:
-1. Shortcuts app → New Shortcut
-2. Add Action → "Get Contents of URL" → `http://100.x.y.z:8080/status`
-3. Add Action → "Speak Text" (use the result from step 2)
-4. Tap shortcut name → "Add to Siri" → say "Is parking free?"
+1. **Shortcuts app** → New Shortcut
+2. Add Action → **"Get Contents of URL"** → `http://100.x.y.z:8080/status`
+3. Add Action → **"Speak Text"** (use the result from step 2)
+4. Tap shortcut name → **"Add to Siri"** → say `"Is parking free?"`
 
 ---
 
-## Step 12: Verification Checklist
+## Step 14: Final Verification Checklist
 
 - [ ] `sudo systemctl status parking-monitor` shows `active (running)`
 - [ ] Telegram bot responds to `/status`
 - [ ] Telegram bot responds to `/scan`
 - [ ] `http://100.x.y.z:8080/` returns `{"status": "ok"}`
-- [ ] Siri says parking status when asked
-- [ ] Pushover notification appears when space becomes free
+- [ ] Siri reports parking status when asked
+- [ ] Pushover notification arrives when space becomes free/occupied
 - [ ] Service auto-restarts after `sudo reboot`
 
 ---
@@ -211,7 +304,7 @@ sudo systemctl restart parking-monitor
 ## Useful Commands
 
 ```bash
-# View logs
+# View live logs
 sudo journalctl -u parking-monitor -f
 
 # Restart service
@@ -221,5 +314,116 @@ sudo systemctl restart parking-monitor
 sudo systemctl stop parking-monitor
 
 # Check database stats
-python -c "from state import ParkingState; db = ParkingState('parking_history.db'); import json; print(json.dumps(db.get_stats(), indent=2))"
+python -c "from state import ParkingState; import json; db = ParkingState('parking_history.db'); print(json.dumps(db.get_stats(), indent=2))"
+
+# Manual status check (with venv active)
+python -c "
+from config import load_config
+from camera import TapoCamera
+from vision import ParkingVision
+cfg = load_config()
+cam = TapoCamera(cfg)
+cam.connect()
+vis = ParkingVision(cfg)
+frame = cam.grab_frame()
+result = vis.check_home_spot(frame)
+print(result)
+"
 ```
+
+---
+
+## Troubleshooting
+
+### "VideoCapture failed to open RTSP stream"
+
+1. Confirm RTSP is enabled in the Tapo app (⚙️ → Advanced Settings → RTSP)
+2. Verify `TAPO_IP`, `TAPO_USER`, `TAPO_PASSWORD` in `.env` match your Camera Account credentials
+3. Test connectivity: `ping <TAPO_IP>`
+4. Check the RTSP URL manually with VLC: `rtsp://<user>:<password>@<ip>:554/stream1`
+
+### "Cannot connect to Tapo camera" / pytapo authentication error
+
+1. Double-check you are using **Camera Account** credentials, not your TP-Link cloud email/password
+2. On some firmware versions pytapo needs the TP-Link cloud email — try that as a fallback
+3. Check the camera is on the same network as the Pi: `ping <TAPO_IP>`
+4. Try reinstalling pytapo: `pip install --upgrade pytapo`
+
+### `externally-managed-environment` pip error
+
+Raspberry Pi OS Bookworm (2023+) blocks pip from installing into the system Python.  Solution: always activate the venv first:
+
+```bash
+source ~/smart-parking-monitor/venv/bin/activate
+pip install -r requirements.txt
+```
+
+If you accidentally ran pip without the venv, recreate it:
+
+```bash
+deactivate  # if in a venv
+rm -rf venv
+python3 -m venv --system-site-packages venv
+source venv/bin/activate
+pip install -r requirements.txt
+```
+
+### `ModuleNotFoundError: No module named 'cv2'`
+
+You either:
+- Created the venv **without** `--system-site-packages`, or
+- Forgot to install `python3-opencv` via apt
+
+Fix:
+
+```bash
+sudo apt install -y python3-opencv
+rm -rf venv
+python3 -m venv --system-site-packages venv
+source venv/bin/activate
+pip install -r requirements.txt
+```
+
+### Camera points in the wrong direction during scan / images look shifted
+
+The camera uses **relative** movement internally.  `connect()` drives it to the left end-stop to establish a known position before any scan.  If positions still look wrong:
+
+1. Run calibration again: `python calibrate.py`
+2. Verify the angles in `SCAN_POSITIONS` match what you see in `calibration/index.html`
+3. Ensure nothing physically obstructs the camera at start-up (it will try to pan fully left)
+
+### Service fails to start (`code=exited, status=200/CHDIR`)
+
+Your username is not `pi`.  Edit the service file and replace all four occurrences of `pi` with your actual username:
+
+```bash
+# Check your username
+whoami
+
+sudo nano /etc/systemd/system/parking-monitor.service
+# Replace /home/pi/ with /home/<your-username>/ and User=/Group= lines
+
+sudo systemctl daemon-reload
+sudo systemctl start parking-monitor
+```
+
+### Telegram bot not responding
+
+1. Ensure the bot token in `.env` is correct (no leading/trailing spaces)
+2. Send `/start` to the bot from the chat whose ID is in `TELEGRAM_CHAT_ID`
+3. Check for errors: `sudo journalctl -u parking-monitor -n 50`
+
+### Pushover notifications not arriving
+
+1. Verify `PUSHOVER_USER_KEY` and `PUSHOVER_API_TOKEN` in `.env`
+2. Check quiet hours: notifications are suppressed between `QUIET_HOURS_START` and `QUIET_HOURS_END`
+3. Test manually:
+   ```bash
+   python -c "
+   from config import load_config
+   from notifications import NotificationManager
+   cfg = load_config()
+   n = NotificationManager(cfg)
+   n.notify_startup()
+   "
+   ```

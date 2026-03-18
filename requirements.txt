@@ -1,7 +1,12 @@
+# OpenCV is intentionally NOT listed here.
+# On Raspberry Pi, install it via apt: sudo apt install -y python3-opencv
+# Then create the venv with: python3 -m venv --system-site-packages venv
+# This avoids a 30-60 minute ARM64 compilation that often fails without
+# additional build dependencies (cmake, libavcodec-dev, etc.).
+
 pytapo>=3.4.0
 anthropic>=0.40.0
 python-telegram-bot>=20.0
 aiohttp>=3.9.0
-opencv-python-headless>=4.8.0
 python-dotenv>=1.0.0
 requests>=2.31.0
