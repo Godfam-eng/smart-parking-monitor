@@ -7,7 +7,7 @@ Stores all parking checks, state changes, and provides statistics queries.
 import logging
 import sqlite3
 import threading
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -24,7 +24,7 @@ class ParkingState:
             db_path: Filesystem path to the .db file, or ':memory:' for in-memory.
         """
         self.db_path = db_path
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self._conn = sqlite3.connect(db_path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._create_tables()
@@ -122,18 +122,20 @@ class ParkingState:
         """
         Return the most recent check record as a dict, or None if no records exist.
         """
-        row = self._conn.execute(
-            "SELECT * FROM checks ORDER BY id DESC LIMIT 1"
-        ).fetchone()
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM checks ORDER BY id DESC LIMIT 1"
+            ).fetchone()
         if row is None:
             return None
         return dict(row)
 
     def get_previous_status(self) -> Optional[str]:
         """Return just the status string from the most recent check, or None."""
-        row = self._conn.execute(
-            "SELECT status FROM checks ORDER BY id DESC LIMIT 1"
-        ).fetchone()
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT status FROM checks ORDER BY id DESC LIMIT 1"
+            ).fetchone()
         return row["status"] if row else None
 
     def has_state_changed(self, new_status: str) -> bool:
@@ -159,75 +161,76 @@ class ParkingState:
             busiest_hours, freest_hours, checks_last_24h, state_changes_last_24h,
             last_check, days_of_data.
         """
-        cursor = self._conn
+        with self._lock:
+            cursor = self._conn
 
-        total_checks = cursor.execute(
-            "SELECT COUNT(*) FROM checks"
-        ).fetchone()[0]
+            total_checks = cursor.execute(
+                "SELECT COUNT(*) FROM checks"
+            ).fetchone()[0]
 
-        free_count = cursor.execute(
-            "SELECT COUNT(*) FROM checks WHERE status='FREE'"
-        ).fetchone()[0]
+            free_count = cursor.execute(
+                "SELECT COUNT(*) FROM checks WHERE status='FREE'"
+            ).fetchone()[0]
 
-        occupied_count = cursor.execute(
-            "SELECT COUNT(*) FROM checks WHERE status='OCCUPIED'"
-        ).fetchone()[0]
+            occupied_count = cursor.execute(
+                "SELECT COUNT(*) FROM checks WHERE status='OCCUPIED'"
+            ).fetchone()[0]
 
-        free_pct = round(free_count / total_checks * 100, 1) if total_checks else 0.0
-        occupied_pct = round(occupied_count / total_checks * 100, 1) if total_checks else 0.0
+            free_pct = round(free_count / total_checks * 100, 1) if total_checks else 0.0
+            occupied_pct = round(occupied_count / total_checks * 100, 1) if total_checks else 0.0
 
-        # Busiest hours (most OCCUPIED checks)
-        busiest = cursor.execute(
-            """
-            SELECT strftime('%H', timestamp) AS hour, COUNT(*) AS cnt
-            FROM checks
-            WHERE status = 'OCCUPIED'
-            GROUP BY hour
-            ORDER BY cnt DESC
-            LIMIT 5
-            """
-        ).fetchall()
+            # Busiest hours (most OCCUPIED checks)
+            busiest = cursor.execute(
+                """
+                SELECT strftime('%H', timestamp) AS hour, COUNT(*) AS cnt
+                FROM checks
+                WHERE status = 'OCCUPIED'
+                GROUP BY hour
+                ORDER BY cnt DESC
+                LIMIT 5
+                """
+            ).fetchall()
 
-        # Freest hours (most FREE checks)
-        freest = cursor.execute(
-            """
-            SELECT strftime('%H', timestamp) AS hour, COUNT(*) AS cnt
-            FROM checks
-            WHERE status = 'FREE'
-            GROUP BY hour
-            ORDER BY cnt DESC
-            LIMIT 5
-            """
-        ).fetchall()
+            # Freest hours (most FREE checks)
+            freest = cursor.execute(
+                """
+                SELECT strftime('%H', timestamp) AS hour, COUNT(*) AS cnt
+                FROM checks
+                WHERE status = 'FREE'
+                GROUP BY hour
+                ORDER BY cnt DESC
+                LIMIT 5
+                """
+            ).fetchall()
 
-        since_24h = (datetime.utcnow() - timedelta(hours=24)).strftime("%Y-%m-%d %H:%M:%S")
+            since_24h = (datetime.now(timezone.utc) - timedelta(hours=24)).strftime("%Y-%m-%d %H:%M:%S")
 
-        checks_24h = cursor.execute(
-            "SELECT COUNT(*) FROM checks WHERE timestamp >= ?", (since_24h,)
-        ).fetchone()[0]
+            checks_24h = cursor.execute(
+                "SELECT COUNT(*) FROM checks WHERE timestamp >= ?", (since_24h,)
+            ).fetchone()[0]
 
-        changes_24h = cursor.execute(
-            "SELECT COUNT(*) FROM state_changes WHERE timestamp >= ?", (since_24h,)
-        ).fetchone()[0]
+            changes_24h = cursor.execute(
+                "SELECT COUNT(*) FROM state_changes WHERE timestamp >= ?", (since_24h,)
+            ).fetchone()[0]
 
-        last_check_row = cursor.execute(
-            "SELECT timestamp, status FROM checks ORDER BY id DESC LIMIT 1"
-        ).fetchone()
+            last_check_row = cursor.execute(
+                "SELECT timestamp, status FROM checks ORDER BY id DESC LIMIT 1"
+            ).fetchone()
 
-        last_check = dict(last_check_row) if last_check_row else None
+            last_check = dict(last_check_row) if last_check_row else None
 
-        # Days of data
-        first_row = cursor.execute(
-            "SELECT timestamp FROM checks ORDER BY id ASC LIMIT 1"
-        ).fetchone()
-        if first_row:
-            try:
-                first_dt = datetime.strptime(first_row["timestamp"], "%Y-%m-%d %H:%M:%S")
-                days_of_data = (datetime.utcnow() - first_dt).days
-            except ValueError:
+            # Days of data
+            first_row = cursor.execute(
+                "SELECT timestamp FROM checks ORDER BY id ASC LIMIT 1"
+            ).fetchone()
+            if first_row:
+                try:
+                    first_dt = datetime.strptime(first_row["timestamp"], "%Y-%m-%d %H:%M:%S")
+                    days_of_data = (datetime.now(timezone.utc).replace(tzinfo=None) - first_dt).days
+                except ValueError:
+                    days_of_data = 0
+            else:
                 days_of_data = 0
-        else:
-            days_of_data = 0
 
         return {
             "total_checks": total_checks,
@@ -249,18 +252,19 @@ class ParkingState:
             List of 24 dicts, one per hour:
             {"hour": int, "total": int, "free": int, "occupied": int, "free_percentage": float}
         """
-        rows = self._conn.execute(
-            """
-            SELECT
-                strftime('%H', timestamp) AS hour,
-                COUNT(*) AS total,
-                SUM(CASE WHEN status='FREE' THEN 1 ELSE 0 END) AS free,
-                SUM(CASE WHEN status='OCCUPIED' THEN 1 ELSE 0 END) AS occupied
-            FROM checks
-            GROUP BY hour
-            ORDER BY hour
-            """
-        ).fetchall()
+        with self._lock:
+            rows = self._conn.execute(
+                """
+                SELECT
+                    strftime('%H', timestamp) AS hour,
+                    COUNT(*) AS total,
+                    SUM(CASE WHEN status='FREE' THEN 1 ELSE 0 END) AS free,
+                    SUM(CASE WHEN status='OCCUPIED' THEN 1 ELSE 0 END) AS occupied
+                FROM checks
+                GROUP BY hour
+                ORDER BY hour
+                """
+            ).fetchall()
 
         # Build a dict keyed by hour
         by_hour = {int(r["hour"]): r for r in rows}
@@ -303,7 +307,7 @@ class ParkingState:
         Returns:
             Total number of rows deleted.
         """
-        cutoff = (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
         deleted = 0
 
         with self._lock:

@@ -2,7 +2,7 @@
 tests/test_state.py — Tests for state.py (uses in-memory SQLite)
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -120,7 +120,7 @@ class TestCleanupOldRecords:
     def test_cleanup_removes_old_records(self, db):
         # Insert a record and then manually backdate it
         db.record_check("FREE", "high", "Old record", angle=0)
-        old_ts = (datetime.utcnow() - timedelta(days=100)).strftime("%Y-%m-%d %H:%M:%S")
+        old_ts = (datetime.now(timezone.utc) - timedelta(days=100)).strftime("%Y-%m-%d %H:%M:%S")
         db._conn.execute("UPDATE checks SET timestamp = ?", (old_ts,))
         db._conn.commit()
 

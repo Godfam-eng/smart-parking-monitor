@@ -6,6 +6,7 @@ Sends parking status alerts, errors, and scan results via Pushover and Telegram 
 
 import io
 import logging
+import re
 from datetime import datetime
 from typing import Optional
 
@@ -17,6 +18,14 @@ logger = logging.getLogger(__name__)
 
 _PUSHOVER_URL = "https://api.pushover.net/1/messages.json"
 _TELEGRAM_API_BASE = "https://api.telegram.org/bot{token}/{method}"
+
+# Characters that need escaping in Telegram Markdown (MarkdownV1)
+_MARKDOWN_SPECIAL = re.compile(r"([*_`\[])")
+
+
+def _escape_markdown(text: str) -> str:
+    """Escape Telegram Markdown V1 special characters in *text*."""
+    return _MARKDOWN_SPECIAL.sub(r"\\\1", text)
 
 
 class NotificationManager:
@@ -184,7 +193,8 @@ class NotificationManager:
     def notify_space_free(self, description: str, image: Optional[bytes] = None) -> None:
         """Notify that the parking space is now FREE."""
         title = "🅿️ Space is FREE!"
-        message = f"🅿️ *Space is FREE!*\n{description}"
+        safe_desc = _escape_markdown(description)
+        message = f"🅿️ *Space is FREE!*\n{safe_desc}"
 
         try:
             if not self.is_quiet_hours():
@@ -201,7 +211,8 @@ class NotificationManager:
 
     def notify_space_occupied(self, description: str, image: Optional[bytes] = None) -> None:
         """Notify that the parking space is now OCCUPIED."""
-        message = f"🚗 *Space is now occupied*\n{description}"
+        safe_desc = _escape_markdown(description)
+        message = f"🚗 *Space is now occupied*\n{safe_desc}"
         try:
             self.send_telegram(message=message, image=image)
         except Exception as exc:
@@ -216,7 +227,7 @@ class NotificationManager:
 
     def notify_error(self, error_msg: str) -> None:
         """Send an error notification via Telegram."""
-        message = f"⚠️ *Error:* {error_msg}"
+        message = f"⚠️ *Error:* {_escape_markdown(error_msg)}"
         try:
             self.send_telegram(message=message)
         except Exception as exc:

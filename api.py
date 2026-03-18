@@ -7,9 +7,8 @@ Uses aiohttp for async HTTP serving.
 
 import asyncio
 import logging
-import threading
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from aiohttp import web
@@ -30,6 +29,28 @@ _start_time: float = 0.0
 
 
 # ------------------------------------------------------------------
+# Authentication middleware
+# ------------------------------------------------------------------
+
+@web.middleware
+async def auth_middleware(request: web.Request, handler):
+    """
+    Optional API key authentication.
+
+    If API_KEY is configured, every request must include either:
+      - Header:      X-API-Key: <key>
+    Requests to / and /health are always allowed (unauthenticated health-check).
+    If API_KEY is empty the middleware is a no-op (backward-compatible).
+    """
+    api_key = _config.API_KEY if _config else ""
+    if api_key and request.path not in ("/", "/health"):
+        provided = request.headers.get("X-API-Key", "")
+        if provided != api_key:
+            return web.json_response({"error": "Unauthorized"}, status=401)
+    return await handler(request)
+
+
+# ------------------------------------------------------------------
 # Route handlers
 # ------------------------------------------------------------------
 
@@ -43,8 +64,9 @@ async def handle_root(request: web.Request) -> web.Response:
 async def handle_status_text(request: web.Request) -> web.Response:
     """GET /status — Plain text for Siri Shortcuts."""
     try:
-        image_bytes = _camera.grab_frame()
-        result = _vision.check_home_spot(image_bytes)
+        loop = asyncio.get_event_loop()
+        image_bytes = await loop.run_in_executor(None, _camera.grab_frame)
+        result = await loop.run_in_executor(None, _vision.check_home_spot, image_bytes)
         status = result.get("status", "UNKNOWN")
         description = result.get("description", "")
 
@@ -69,14 +91,15 @@ async def handle_status_text(request: web.Request) -> web.Response:
 async def handle_status_json(request: web.Request) -> web.Response:
     """GET /status/json — Full JSON status."""
     try:
-        image_bytes = _camera.grab_frame()
-        result = _vision.check_home_spot(image_bytes)
+        loop = asyncio.get_event_loop()
+        image_bytes = await loop.run_in_executor(None, _camera.grab_frame)
+        result = await loop.run_in_executor(None, _vision.check_home_spot, image_bytes)
         return web.json_response(
             {
                 "status": result.get("status", "UNKNOWN"),
                 "confidence": result.get("confidence", "low"),
                 "description": result.get("description", ""),
-                "timestamp": datetime.utcnow().isoformat() + "Z",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
             }
         )
     except Exception as exc:
@@ -87,7 +110,8 @@ async def handle_status_json(request: web.Request) -> web.Response:
 async def handle_scan_text(request: web.Request) -> web.Response:
     """GET /scan — Plain text scan result for Siri Shortcuts."""
     try:
-        positions = _camera.scan_street()
+        loop = asyncio.get_event_loop()
+        positions = await loop.run_in_executor(None, _camera.scan_street)
         if not positions:
             return web.Response(
                 text="Could not capture scan images.",
@@ -97,7 +121,9 @@ async def handle_scan_text(request: web.Request) -> web.Response:
 
         free_positions = []
         for pos in positions:
-            result = _vision.check_scan_position(pos["image"], pos["position_name"])
+            result = await loop.run_in_executor(
+                None, _vision.check_scan_position, pos["image"], pos["position_name"]
+            )
             if result.get("status") == "FREE":
                 free_positions.append((pos, result))
 
@@ -126,10 +152,13 @@ async def handle_scan_text(request: web.Request) -> web.Response:
 async def handle_scan_json(request: web.Request) -> web.Response:
     """GET /scan/json — Full JSON scan results."""
     try:
-        positions = _camera.scan_street()
+        loop = asyncio.get_event_loop()
+        positions = await loop.run_in_executor(None, _camera.scan_street)
         results = []
         for pos in positions:
-            result = _vision.check_scan_position(pos["image"], pos["position_name"])
+            result = await loop.run_in_executor(
+                None, _vision.check_scan_position, pos["image"], pos["position_name"]
+            )
             results.append(
                 {
                     "angle": pos["angle"],
@@ -139,7 +168,9 @@ async def handle_scan_json(request: web.Request) -> web.Response:
                     "description": result.get("description", ""),
                 }
             )
-        return web.json_response({"positions": results, "timestamp": datetime.utcnow().isoformat() + "Z"})
+        return web.json_response(
+            {"positions": results, "timestamp": datetime.now(timezone.utc).isoformat()}
+        )
 
     except Exception as exc:
         logger.error("Error in /scan/json handler: %s", exc)
@@ -149,7 +180,8 @@ async def handle_scan_json(request: web.Request) -> web.Response:
 async def handle_snapshot(request: web.Request) -> web.Response:
     """GET /snapshot — Return current JPEG frame."""
     try:
-        image_bytes = _camera.get_snapshot()
+        loop = asyncio.get_event_loop()
+        image_bytes = await loop.run_in_executor(None, _camera.get_snapshot)
         return web.Response(
             body=image_bytes,
             content_type="image/jpeg",
@@ -172,10 +204,12 @@ async def handle_stats(request: web.Request) -> web.Response:
 
 async def handle_health(request: web.Request) -> web.Response:
     """GET /health — Liveness / readiness check."""
+    loop = asyncio.get_event_loop()
+
     # Check camera
     camera_ok = "ok"
     try:
-        _camera.grab_frame()
+        await loop.run_in_executor(None, _camera.grab_frame)
     except Exception as exc:
         camera_ok = f"error: {exc}"
 
@@ -203,7 +237,7 @@ async def handle_health(request: web.Request) -> web.Response:
 
 def _build_app() -> web.Application:
     """Create and configure the aiohttp Application."""
-    app = web.Application()
+    app = web.Application(middlewares=[auth_middleware])
     app.router.add_get("/", handle_root)
     app.router.add_get("/status", handle_status_text)
     app.router.add_get("/status/json", handle_status_json)
@@ -242,9 +276,8 @@ def start_api(
     app = _build_app()
 
     # Run inside a new event loop (this function runs in a thread)
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    web.run_app(app, host=cfg.API_HOST, port=cfg.API_PORT, loop=loop, access_log=None)
+    asyncio.set_event_loop(asyncio.new_event_loop())
+    web.run_app(app, host=cfg.API_HOST, port=cfg.API_PORT, access_log=None)
 
 
 # ------------------------------------------------------------------

@@ -18,7 +18,6 @@ RestartSec=30
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=parking-monitor
-WatchdogSec=600
 
 [Install]
 WantedBy=multi-user.target
