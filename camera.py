@@ -47,9 +47,7 @@ async def move_camera(pan: int, tilt: int) -> None:
     tilt: negative = up,    positive = down
     """
     client = ApiClient(config.TAPO_USER, config.TAPO_PASS)
-    device = await client.p110(config.TAPO_IP)  # C225 is camera, not plug — use correct class
-    # python-tapo uses C200/C225 via the camera API
-    # The library exposes goto_preset or move_motor; we use absolute positioning.
+    device = await client.c200(config.TAPO_IP)  # C225 uses the C200 camera API class
     await device.move_motor(pan, tilt)
     logger.debug("Camera moved to pan=%d tilt=%d", pan, tilt)
 
