@@ -191,6 +191,13 @@ def validate(config: Config) -> bool:
             logger.error("Configuration range error: %s", err)
         return False
 
+    if config.CONFIDENCE_THRESHOLD not in ("low", "medium", "high"):
+        logger.error(
+            "CONFIDENCE_THRESHOLD='%s' must be 'low', 'medium', or 'high'",
+            config.CONFIDENCE_THRESHOLD,
+        )
+        return False
+
     # Warn about optional-but-recommended keys
     recommended = {
         "PUSHOVER_USER_KEY": config.PUSHOVER_USER_KEY,

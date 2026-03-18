@@ -276,7 +276,8 @@ def start_api(
     app = _build_app()
 
     # Run inside a new event loop (this function runs in a thread)
-    asyncio.set_event_loop(asyncio.new_event_loop())
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
     web.run_app(app, host=cfg.API_HOST, port=cfg.API_PORT, access_log=None)
 
 
