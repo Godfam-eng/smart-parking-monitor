@@ -64,7 +64,7 @@ async def handle_root(request: web.Request) -> web.Response:
 async def handle_status_text(request: web.Request) -> web.Response:
     """GET /status — Plain text for Siri Shortcuts."""
     try:
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         image_bytes = await loop.run_in_executor(None, _camera.grab_frame)
         result = await loop.run_in_executor(None, _vision.check_home_spot, image_bytes)
         status = result.get("status", "UNKNOWN")
@@ -91,7 +91,7 @@ async def handle_status_text(request: web.Request) -> web.Response:
 async def handle_status_json(request: web.Request) -> web.Response:
     """GET /status/json — Full JSON status."""
     try:
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         image_bytes = await loop.run_in_executor(None, _camera.grab_frame)
         result = await loop.run_in_executor(None, _vision.check_home_spot, image_bytes)
         return web.json_response(
@@ -110,7 +110,7 @@ async def handle_status_json(request: web.Request) -> web.Response:
 async def handle_scan_text(request: web.Request) -> web.Response:
     """GET /scan — Plain text scan result for Siri Shortcuts."""
     try:
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         positions = await loop.run_in_executor(None, _camera.scan_street)
         if not positions:
             return web.Response(
@@ -152,7 +152,7 @@ async def handle_scan_text(request: web.Request) -> web.Response:
 async def handle_scan_json(request: web.Request) -> web.Response:
     """GET /scan/json — Full JSON scan results."""
     try:
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         positions = await loop.run_in_executor(None, _camera.scan_street)
         results = []
         for pos in positions:
@@ -180,7 +180,7 @@ async def handle_scan_json(request: web.Request) -> web.Response:
 async def handle_snapshot(request: web.Request) -> web.Response:
     """GET /snapshot — Return current JPEG frame."""
     try:
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         image_bytes = await loop.run_in_executor(None, _camera.get_snapshot)
         return web.Response(
             body=image_bytes,
@@ -204,7 +204,7 @@ async def handle_stats(request: web.Request) -> web.Response:
 
 async def handle_health(request: web.Request) -> web.Response:
     """GET /health — Liveness / readiness check."""
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
 
     # Check camera
     camera_ok = "ok"

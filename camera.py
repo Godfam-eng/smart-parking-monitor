@@ -2,6 +2,14 @@
 camera.py — Tapo C225 camera interface for Smart Parking Monitor.
 
 Handles RTSP streaming via OpenCV and pan/tilt control via pytapo.
+
+IMPORTANT — moveMotor() is relative, not absolute:
+    pytapo's moveMotor(pan, tilt) moves the camera BY that many degrees from
+    its current position.  To support absolute angle commands we track the
+    current position in software and send only the delta to the hardware.
+    Before any scan sequence, call calibrate_position() (done automatically
+    by connect()) to drive the camera to its physical left end-stop so the
+    software position matches reality.
 """
 
 import logging
@@ -16,13 +24,26 @@ from config import Config
 
 logger = logging.getLogger(__name__)
 
-# Position labels keyed by rough pan angle range (low inclusive, high inclusive for last)
+# Safe pan/tilt range for the Tapo C225
+_PAN_MIN: int = -180
+_PAN_MAX: int = 180
+_TILT_MIN: int = -20
+_TILT_MAX: int = 20
+
+# A large negative sweep guaranteed to reach the physical left end-stop
+# regardless of current position, used during calibration.
+_CALIBRATION_PAN_SWEEP: int = -360
+# Seconds to wait for the camera to reach and settle at the end-stop.
+_CALIBRATION_SETTLE_TIME: float = 6.0
+
+# Position labels — non-overlapping integer ranges covering -90 to +90.
+# Each integer in that range falls into exactly one bucket.
 _POSITION_LABELS = [
-    (-90, -45, "far left"),
-    (-45, -15, "left"),
+    (-90, -46, "far left"),
+    (-45, -16, "left"),
     (-15, 15, "center"),
-    (15, 45, "right"),
-    (45, 90, "far right"),
+    (16, 45, "right"),
+    (46, 90, "far right"),
 ]
 
 
@@ -41,6 +62,9 @@ class TapoCamera:
         """Initialise with configuration. Does not connect yet."""
         self.config = config
         self.tapo: Optional[Tapo] = None
+        # Software-tracked position — only valid after calibrate_position()
+        self._current_pan: int = 0
+        self._current_tilt: int = 0
 
     # ------------------------------------------------------------------
     # Connection
@@ -48,7 +72,10 @@ class TapoCamera:
 
     def connect(self) -> None:
         """
-        Establish a connection to the Tapo camera.
+        Establish a connection to the Tapo camera and calibrate position.
+
+        Drives the camera to its physical left end-stop so that all
+        subsequent move_to_angle() calls use correct absolute deltas.
 
         Raises:
             ConnectionError: if the camera cannot be reached.
@@ -62,9 +89,47 @@ class TapoCamera:
             logger.info(
                 "Connected to Tapo camera at %s", self.config.TAPO_IP
             )
+            self.calibrate_position()
+        except ConnectionError:
+            raise
         except Exception as exc:
             logger.error("Failed to connect to Tapo camera at %s: %s", self.config.TAPO_IP, exc)
             raise ConnectionError(f"Cannot connect to Tapo camera: {exc}") from exc
+
+    # ------------------------------------------------------------------
+    # Position calibration
+    # ------------------------------------------------------------------
+
+    def calibrate_position(self) -> None:
+        """
+        Drive the camera to its physical left end-stop to establish a known
+        absolute position for delta-based movement.
+
+        Sends a large negative pan command (-360°) that is guaranteed to
+        reach the hardware limit regardless of current position, then sets
+        _current_pan to _PAN_MIN (-180°) so all subsequent move_to_angle()
+        calls can compute accurate deltas.
+
+        Raises:
+            RuntimeError: if the camera is not connected.
+        """
+        if self.tapo is None:
+            raise RuntimeError("Camera not connected. Call connect() first.")
+
+        logger.info("Calibrating camera position: driving to left end-stop…")
+        try:
+            # A large negative sweep always reaches the physical left end-stop
+            self.tapo.moveMotor(_CALIBRATION_PAN_SWEEP, 0)
+            # Wait for the camera to hit the stop and fully settle
+            time.sleep(_CALIBRATION_SETTLE_TIME)
+            self._current_pan = _PAN_MIN
+            self._current_tilt = 0
+            logger.info(
+                "Camera calibrated: position reset to pan=%d (left end-stop)", _PAN_MIN
+            )
+        except Exception as exc:
+            logger.error("Camera position calibration failed: %s", exc)
+            raise
 
     # ------------------------------------------------------------------
     # RTSP helpers
@@ -137,22 +202,41 @@ class TapoCamera:
 
     def move_to_angle(self, pan_angle: int, tilt_angle: int = 0) -> None:
         """
-        Move camera to the given pan/tilt angles and wait for stabilisation.
+        Move camera to the given absolute pan/tilt angles and wait for stabilisation.
+
+        Internally converts the absolute target into a relative delta and calls
+        moveMotor(delta_pan, delta_tilt), then updates the software-tracked position.
 
         Args:
-            pan_angle: Horizontal angle in degrees (negative = left, positive = right).
-            tilt_angle: Vertical angle in degrees (negative = down, positive = up).
+            pan_angle:  Absolute horizontal angle in degrees (negative = left,
+                        positive = right).  Clamped to [_PAN_MIN, _PAN_MAX].
+            tilt_angle: Absolute vertical angle in degrees (negative = down,
+                        positive = up).  Clamped to [_TILT_MIN, _TILT_MAX].
         """
         if self.tapo is None:
             raise RuntimeError("Camera not connected. Call connect() first.")
 
+        # Clamp to safe hardware range
+        pan_target = max(_PAN_MIN, min(_PAN_MAX, pan_angle))
+        tilt_target = max(_TILT_MIN, min(_TILT_MAX, tilt_angle))
+
+        # Compute relative deltas from the last known position
+        pan_delta = pan_target - self._current_pan
+        tilt_delta = tilt_target - self._current_tilt
+
         try:
-            logger.info("Moving camera to pan=%d, tilt=%d", pan_angle, tilt_angle)
-            self.tapo.moveMotor(pan_angle, tilt_angle)
+            logger.info(
+                "Moving camera to pan=%d, tilt=%d (delta: pan=%+d, tilt=%+d)",
+                pan_target, tilt_target, pan_delta, tilt_delta,
+            )
+            self.tapo.moveMotor(pan_delta, tilt_delta)
+            # Update tracked position BEFORE sleep so it's always accurate
+            self._current_pan = pan_target
+            self._current_tilt = tilt_target
             logger.debug("Waiting %.1f s for camera to stabilise", self.config.SCAN_SETTLE_TIME)
             time.sleep(self.config.SCAN_SETTLE_TIME)
         except Exception as exc:
-            logger.error("Failed to move camera to pan=%d tilt=%d: %s", pan_angle, tilt_angle, exc)
+            logger.error("Failed to move camera to pan=%d tilt=%d: %s", pan_target, tilt_target, exc)
             raise
 
     def move_to_home(self) -> None:
