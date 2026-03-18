@@ -178,32 +178,36 @@ If either command fails, see the **Troubleshooting** section at the bottom.
 
 ---
 
-## Step 8: Calibrate the Camera
+## Step 8: Camera Calibration (Automatic)
 
-With the camera positioned at your window:
+The system **auto-calibrates on first boot** — no manual step needed!
+
+When you start the monitor for the first time (`python main.py`), it will:
+1. Sweep the camera through 13 angles (−90° to +90°)
+2. Send each frame to Claude for scoring (0–10 usefulness)
+3. Select the best angles (score ≥ 6) as `SCAN_POSITIONS`
+4. Pick the angle with the best view of your home spot as `HOME_POSITION`
+5. Send you a Telegram summary with all scores and selected positions
+
+> **Note**: Auto-calibration skips during night hours (quiet hours) to avoid poor-quality scores. If you reboot at 2am, it will use default positions and re-calibrate the next time it runs in daylight.
+
+### Optional: Run calibration manually
+
+If you want to run calibration on demand (e.g., after repositioning the camera):
 
 ```bash
+# Via Telegram: send /calibrate to your bot
+
+# Or via CLI (AI-assisted if Anthropic key configured):
 source venv/bin/activate
 python calibrate.py
 ```
 
-This will:
-1. Connect to the camera and drive it to the left end-stop (this is normal — it establishes a known position)
-2. Sweep from −90° to +90° and save a JPEG at each angle to `calibration/`
-3. Generate `calibration/index.html`
-
-Copy the directory to your Mac for review:
+The CLI tool also generates `calibration/index.html` with visual thumbnails for review:
 
 ```bash
-# On your Mac:
+# Copy to your Mac for review:
 scp -r pi@parking-pi.local:~/smart-parking-monitor/calibration/ ~/Desktop/
-```
-
-Open `~/Desktop/calibration/index.html`, note which angles show useful street coverage, then update `SCAN_POSITIONS` in `.env`:
-
-```bash
-nano .env
-# e.g. SCAN_POSITIONS=-60,-30,0,30,60
 ```
 
 ---
@@ -421,9 +425,10 @@ pip install -r requirements.txt
 
 The camera uses **relative** movement internally.  `connect()` drives it to the left end-stop to establish a known position before any scan.  If positions still look wrong:
 
-1. Run calibration again: `python calibrate.py`
-2. Verify the angles in `SCAN_POSITIONS` match what you see in `calibration/index.html`
-3. Ensure nothing physically obstructs the camera at start-up (it will try to pan fully left)
+1. Run calibration again: send `/calibrate` via Telegram, or run `python calibrate.py`
+2. Check the Telegram progress messages to see which angles scored well
+3. If auto-calibration is selecting poor angles, adjust `CALIBRATION_MIN_USEFULNESS` in `.env`
+4. Ensure nothing physically obstructs the camera at start-up (it will try to pan fully left)
 
 ### Service fails to start (`code=exited, status=200/CHDIR`)
 

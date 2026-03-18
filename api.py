@@ -26,6 +26,7 @@ _camera: Optional[TapoCamera] = None
 _vision: Optional[ParkingVision] = None
 _state: Optional[ParkingState] = None
 _start_time: float = 0.0
+_calibrator = None  # Optional[AutoCalibrator] — initialised lazily in start_api()
 
 
 # ------------------------------------------------------------------
@@ -268,6 +269,46 @@ async def handle_health(request: web.Request) -> web.Response:
     )
 
 
+async def handle_calibrate(request: web.Request) -> web.Response:
+    """POST /calibrate — Trigger auto-calibration sweep (blocking, may take minutes)."""
+    if _calibrator is None:
+        return web.json_response(
+            {"error": "Calibration not available — camera or AI not initialised"},
+            status=503,
+        )
+    try:
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(None, _calibrator.run_calibration)
+        return web.json_response(
+            {
+                "home_position": result.home_position,
+                "scan_positions": result.scan_positions,
+                "parking_side": result.parking_side,
+                "opposite_restriction": result.opposite_restriction,
+                "timestamp": result.timestamp,
+                "angle_count": len(result.angle_scores),
+            }
+        )
+    except Exception as exc:
+        logger.error("Error in POST /calibrate handler: %s", exc)
+        return web.json_response({"error": str(exc)}, status=500)
+
+
+async def handle_calibration_status(request: web.Request) -> web.Response:
+    """GET /calibration — Return the most recent calibration data."""
+    try:
+        cal = _state.get_latest_calibration()
+        if cal is None:
+            return web.json_response(
+                {"status": "uncalibrated", "message": "No calibration found. POST /calibrate to run."},
+                status=404,
+            )
+        return web.json_response(cal)
+    except Exception as exc:
+        logger.error("Error in GET /calibration handler: %s", exc)
+        return web.json_response({"error": str(exc)}, status=500)
+
+
 # ------------------------------------------------------------------
 # App factory
 # ------------------------------------------------------------------
@@ -285,6 +326,8 @@ def _build_app() -> web.Application:
     app.router.add_get("/snapshot", handle_snapshot)
     app.router.add_get("/stats", handle_stats)
     app.router.add_get("/health", handle_health)
+    app.router.add_post("/calibrate", handle_calibrate)
+    app.router.add_get("/calibration", handle_calibration_status)
     return app
 
 
@@ -304,12 +347,20 @@ def start_api(
     Intended to be called in a daemon thread from main.py.
     Also works standalone: ``python api.py``
     """
-    global _config, _camera, _vision, _state, _start_time
+    global _config, _camera, _vision, _state, _start_time, _calibrator
     _config = cfg
     _camera = camera
     _vision = vision
     _state = state
     _start_time = time.time()
+
+    # Initialise the calibrator lazily to avoid circular imports at module level
+    try:
+        from auto_calibrate import AutoCalibrator
+        _calibrator = AutoCalibrator(camera, vision, state)
+    except Exception as exc:
+        logger.warning("Could not initialise AutoCalibrator in API: %s", exc)
+        _calibrator = None
 
     logger.info("Starting HTTP API on %s:%d", cfg.API_HOST, cfg.API_PORT)
     app = _build_app()

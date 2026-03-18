@@ -57,7 +57,7 @@ Smart Parking Monitor watches your UK terraced street 24/7 through a window-moun
 - ✅ **HTTP REST API** — Full JSON API plus plain-text Siri-compatible responses
 - ✅ **Tailscale remote access** — Secure access from anywhere via VPN
 - ✅ **systemd service** — Auto-start on boot, automatic restart on failure
-- ✅ **Calibration tool** — Visual sweep tool to configure optimal scan angles
+- ✅ **Smart auto-calibration** — Claude AI scores each angle on first boot and selects optimal scan positions automatically
 - ✅ **Window glass handling** — Prompts instruct Claude to ignore reflections and glare
 
 ---
@@ -96,18 +96,14 @@ cp .env.example .env
 nano .env  # Fill in your API keys, camera IP, Telegram tokens, etc.
 ```
 
-**4. Calibrate the camera:**
-```bash
-python calibrate.py
-# Review calibration/index.html, then update SCAN_POSITIONS in .env
-```
-
-**5. Test it works:**
+**4. Test it works:**
 ```bash
 python main.py --skip-bot --skip-api
 ```
 
-**6. Install as a service (auto-start on boot):**
+The system will automatically calibrate on first boot — Claude will sweep the camera through 13 angles, score each one, and pick the best scan positions. No manual calibration step needed.
+
+**5. Install as a service (auto-start on boot):**
 ```bash
 sudo cp parking-monitor.service /etc/systemd/system/
 sudo systemctl daemon-reload
@@ -116,6 +112,26 @@ sudo systemctl start parking-monitor
 ```
 
 See [SETUP_GUIDE.md](SETUP_GUIDE.md) for the full step-by-step setup.
+
+---
+
+## Auto-Calibration
+
+On first boot (or on-demand via `/calibrate`), the system automatically:
+
+1. **Sweeps** the camera through 13 angles (−90° to +90° in 15° steps)
+2. **Asks Claude** to score each frame for parking monitoring usefulness (0–10)
+3. **Selects** the best angles (score ≥ `CALIBRATION_MIN_USEFULNESS`) as scan positions
+4. **Picks** the home position from angles where Claude sees the house's own parking spot
+5. **Saves** the result to SQLite and **reports** progress via Telegram in real-time
+
+Calibration is skipped at night (quiet hours) to avoid poor-quality scores.
+Re-calibration is triggered automatically after `CALIBRATION_INTERVAL_DAYS` days.
+
+You can also run the legacy CLI tool for a visual review:
+```bash
+python calibrate.py   # AI-assisted if ANTHROPIC_API_KEY is set, image-only otherwise
+```
 
 ---
 
@@ -149,6 +165,9 @@ See [SETUP_GUIDE.md](SETUP_GUIDE.md) for the full step-by-step setup.
 | `OPPOSITE_SIDE_RESTRICTION` | `double_yellow` | Restriction on the opposite side: `none`, `single_yellow`, `double_yellow`, `no_parking` |
 | `VEHICLE_LENGTH_METRES` | `4.5` | Owner's vehicle length (metres) for space-fit assessment |
 | `MIN_SPACE_METRES` | `5.0` | Minimum gap (metres) to count as a free space |
+| `AUTO_CALIBRATE` | `true` | Run auto-calibration on first boot |
+| `CALIBRATION_INTERVAL_DAYS` | `30` | Re-calibrate every N days (0 = only on first boot) |
+| `CALIBRATION_MIN_USEFULNESS` | `6` | Minimum Claude score (0–10) to include an angle in scan positions |
 
 ---
 
@@ -172,6 +191,8 @@ See [docs/SIRI_SHORTCUT_GUIDE.md](docs/SIRI_SHORTCUT_GUIDE.md) for full instruct
 | `/scan` | Scan entire street for free spaces |
 | `/snapshot` | Get current camera view (no AI) |
 | `/stats` | View parking statistics |
+| `/calibrate` | Run auto-calibration sweep (AI scores all 13 angles) |
+| `/positions` | Show current calibrated scan positions and home position |
 | `/help` | Show help message |
 
 You can also send natural language messages:
@@ -179,6 +200,8 @@ You can also send natural language messages:
 - "Show me the camera" → snapshot
 - "Scan the street" → full scan
 - "Show me the stats" → statistics
+- "Calibrate" → trigger calibration
+- "Positions" or "angles" → show current positions
 
 ### HTTP API
 
@@ -193,6 +216,8 @@ You can also send natural language messages:
 | `GET /snapshot` | JPEG | Current camera frame |
 | `GET /stats` | JSON | Database statistics |
 | `GET /health` | JSON | System health check |
+| `GET /calibration` | JSON | Current calibration data |
+| `POST /calibrate` | JSON | Trigger auto-calibration sweep |
 
 See [docs/API_REFERENCE.md](docs/API_REFERENCE.md) for full documentation.
 

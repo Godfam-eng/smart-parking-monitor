@@ -77,6 +77,14 @@ class Config:
     VEHICLE_LENGTH_METRES: float = 4.5         # Owner's vehicle length for space-fit assessment
     MIN_SPACE_METRES: float = 5.0              # Minimum gap (metres) to count as a free space
 
+    # --- Auto-Calibration ---
+    AUTO_CALIBRATE: bool = True                # Run auto-calibration on first boot
+    CALIBRATION_INTERVAL_DAYS: int = 30        # Re-calibrate every N days (0 = never auto-recalibrate)
+    CALIBRATION_ANGLES: List[int] = field(
+        default_factory=lambda: [-90, -75, -60, -45, -30, -15, 0, 15, 30, 45, 60, 75, 90]
+    )
+    CALIBRATION_MIN_USEFULNESS: int = 6        # Minimum usefulness score to include in scan positions
+
 
 def _parse_scan_positions(raw: str) -> List[int]:
     """Parse a comma-separated string of pan angles into a list of ints."""
@@ -146,10 +154,20 @@ def load_config() -> Config:
         OPPOSITE_SIDE_RESTRICTION=os.getenv("OPPOSITE_SIDE_RESTRICTION", "double_yellow"),
         VEHICLE_LENGTH_METRES=_safe_float("VEHICLE_LENGTH_METRES", os.getenv("VEHICLE_LENGTH_METRES", "4.5"), 4.5),
         MIN_SPACE_METRES=_safe_float("MIN_SPACE_METRES", os.getenv("MIN_SPACE_METRES", "5.0"), 5.0),
+        AUTO_CALIBRATE=os.getenv("AUTO_CALIBRATE", "true").lower() in ("true", "1", "yes"),
+        CALIBRATION_INTERVAL_DAYS=_safe_int(
+            "CALIBRATION_INTERVAL_DAYS", os.getenv("CALIBRATION_INTERVAL_DAYS", "30"), 30
+        ),
+        CALIBRATION_ANGLES=_parse_scan_positions(
+            os.getenv("CALIBRATION_ANGLES", "-90,-75,-60,-45,-30,-15,0,15,30,45,60,75,90")
+        ),
+        CALIBRATION_MIN_USEFULNESS=_safe_int(
+            "CALIBRATION_MIN_USEFULNESS", os.getenv("CALIBRATION_MIN_USEFULNESS", "6"), 6
+        ),
     )
 
 
-def validate(config: Config, *, require_telegram: bool = True) -> bool:
+def validate(config: Config, *, require_telegram: bool = True, require_anthropic: bool = True) -> bool:
     """
     Validate that all required configuration keys are present and numeric values
     are within acceptable ranges.
@@ -158,6 +176,8 @@ def validate(config: Config, *, require_telegram: bool = True) -> bool:
         config: The Config instance to validate.
         require_telegram: When False, TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID
             are not required (use when running with --skip-bot).
+        require_anthropic: When False, ANTHROPIC_API_KEY is not required (use
+            when testing camera connectivity without AI inference).
 
     Returns True if valid, False otherwise.
     Prints clear error messages for any missing required keys.
@@ -166,8 +186,10 @@ def validate(config: Config, *, require_telegram: bool = True) -> bool:
         "TAPO_IP": config.TAPO_IP,
         "TAPO_USER": config.TAPO_USER,
         "TAPO_PASSWORD": config.TAPO_PASSWORD,
-        "ANTHROPIC_API_KEY": config.ANTHROPIC_API_KEY,
     }
+
+    if require_anthropic:
+        required["ANTHROPIC_API_KEY"] = config.ANTHROPIC_API_KEY
 
     if require_telegram:
         required["TELEGRAM_BOT_TOKEN"] = config.TELEGRAM_BOT_TOKEN

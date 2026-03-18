@@ -172,11 +172,49 @@ def main() -> None:
         logger.error("Camera self-test failed: %s — exiting (systemd will retry)", exc)
         sys.exit(1)
 
-    # 4. Start Telegram bot in a daemon thread
+    # 4. Auto-calibration check (runs BEFORE monitoring loop starts so the
+    #    camera sweep does not conflict with active monitoring).
+    if config.AUTO_CALIBRATE:
+        from auto_calibrate import AutoCalibrator
+        calibrator = AutoCalibrator(camera, vision, state, notifications)
+
+        if calibrator.needs_calibration():
+            # Skip calibration during quiet/nighttime hours — results would be poor.
+            if notifications.is_quiet_hours():
+                logger.info(
+                    "Auto-calibration needed but it's nighttime — deferring until daylight"
+                )
+            else:
+                logger.info("No calibration found — running auto-calibration…")
+                try:
+                    cal_result = calibrator.run_calibration()
+                    config.HOME_POSITION = cal_result.home_position
+                    config.SCAN_POSITIONS = cal_result.scan_positions
+                    logger.info(
+                        "Auto-calibration complete: home=%d, positions=%s",
+                        cal_result.home_position,
+                        cal_result.scan_positions,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "Auto-calibration failed: %s — using config defaults", exc
+                    )
+        else:
+            cal_data = calibrator.get_current_calibration()
+            if cal_data:
+                config.HOME_POSITION = cal_data.home_position
+                config.SCAN_POSITIONS = cal_data.scan_positions
+                logger.info(
+                    "Loaded calibration: home=%d, positions=%s",
+                    cal_data.home_position,
+                    cal_data.scan_positions,
+                )
+
+    # 5. Start Telegram bot in a daemon thread
     if not args.skip_bot and config.TELEGRAM_BOT_TOKEN:
         bot_thread = threading.Thread(
             target=start_bot,
-            args=(config, camera, vision, state),
+            args=(config, camera, vision, state, notifications),
             daemon=True,
             name="TelegramBot",
         )
@@ -185,7 +223,7 @@ def main() -> None:
     else:
         logger.info("Telegram bot disabled")
 
-    # 5. Start HTTP API in a daemon thread
+    # 6. Start HTTP API in a daemon thread
     if not args.skip_api:
         api_thread = threading.Thread(
             target=start_api,

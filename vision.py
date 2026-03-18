@@ -21,6 +21,17 @@ _FALLBACK_RESPONSE = {
     "description": "Failed to parse AI response",
 }
 
+_CALIBRATION_FALLBACK = {
+    "street_visible": False,
+    "parking_area_visible": False,
+    "parking_side": "none",
+    "opposite_restriction": "unclear",
+    "obstructions": ["none"],
+    "home_spot_visible": False,
+    "usefulness_score": 0,
+    "description": "Failed to assess calibration frame",
+}
+
 
 class ParkingVision:
     """Uses Claude vision API to analyse parking space images."""
@@ -103,6 +114,157 @@ class ParkingVision:
         except Exception as exc:
             logger.error("Unexpected error calling Claude API for scan position '%s': %s", position_name, exc)
             return {**_FALLBACK_RESPONSE, "description": f"API error: {exc}"}
+
+    # ------------------------------------------------------------------
+    # Calibration assessment
+    # ------------------------------------------------------------------
+
+    def assess_calibration_frame(self, image_bytes: bytes, angle: int) -> dict:
+        """
+        Ask Claude to assess a calibration frame for parking monitoring usefulness.
+
+        Args:
+            image_bytes: JPEG image data.
+            angle:       Pan angle at which the frame was captured (degrees).
+
+        Returns:
+            Dict with street_visible, parking_area_visible, parking_side,
+            opposite_restriction, obstructions, home_spot_visible,
+            usefulness_score (0–10), description.
+        """
+        prompt = self._build_calibration_prompt(angle)
+        try:
+            raw_text = self._send_to_claude(image_bytes, prompt)
+            result = self._parse_calibration_response(raw_text)
+            logger.info(
+                "Calibration angle %+d°: usefulness=%d home_spot=%s — %s",
+                angle,
+                result.get("usefulness_score", 0),
+                result.get("home_spot_visible", False),
+                result.get("description", ""),
+            )
+            return result
+        except anthropic.AuthenticationError as exc:
+            logger.error("Claude authentication error — check ANTHROPIC_API_KEY: %s", exc)
+            return dict(_CALIBRATION_FALLBACK)
+        except anthropic.RateLimitError as exc:
+            logger.warning("Claude rate limit at angle %+d°: %s", angle, exc)
+            return dict(_CALIBRATION_FALLBACK)
+        except anthropic.APITimeoutError as exc:
+            logger.warning("Claude API timeout at angle %+d°: %s", angle, exc)
+            return dict(_CALIBRATION_FALLBACK)
+        except Exception as exc:
+            logger.error("Unexpected error calling Claude at angle %+d°: %s", angle, exc)
+            return dict(_CALIBRATION_FALLBACK)
+
+    def _build_calibration_prompt(self, angle: int) -> str:
+        """Build the prompt for calibration frame assessment."""
+        return (
+            "You are helping calibrate a parking monitoring camera. This camera is mounted "
+            "inside a house window looking out at a street. "
+            f"This frame was captured at pan angle {angle:+d}°.\n\n"
+            "Assess this image for its usefulness as a parking monitoring viewpoint.\n\n"
+            "Respond with ONLY valid JSON (no markdown, no explanation):\n"
+            "{\n"
+            '  "street_visible": true or false,\n'
+            '  "parking_area_visible": true or false,\n'
+            '  "parking_side": "near" or "far" or "both" or "none",\n'
+            '  "opposite_restriction": "double_yellow" or "single_yellow" or "none" or "unclear",\n'
+            '  "obstructions": ["window_frame", "wall", "reflection", "too_dark", "none"],\n'
+            '  "home_spot_visible": true or false,\n'
+            '  "usefulness_score": 0-10,\n'
+            '  "description": "one sentence describing what you see"\n'
+            "}\n\n"
+            "Scoring guide:\n"
+            "- 10: Clear view of kerbside parking, minimal obstructions\n"
+            "- 7-9: Good parking view with minor issues\n"
+            "- 4-6: Partially useful, some obstructions or only partial street view\n"
+            "- 1-3: Mostly obstructed (window frame, wall, heavy reflections)\n"
+            "- 0: No street visible at all"
+        )
+
+    def _parse_calibration_response(self, text: str) -> dict:
+        """
+        Parse and validate a calibration assessment response from Claude.
+
+        Applies sensible defaults for any missing or invalid fields.
+
+        Returns:
+            Dict with the full calibration assessment.
+        """
+        stripped = text.strip()
+        data = None
+
+        # 1. Try raw JSON
+        try:
+            data = json.loads(stripped)
+        except json.JSONDecodeError:
+            pass
+
+        # 2. Try ```json ... ``` or ``` ... ``` fences
+        if data is None:
+            fence_pattern = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.DOTALL)
+            match = fence_pattern.search(stripped)
+            if match:
+                try:
+                    data = json.loads(match.group(1))
+                except json.JSONDecodeError:
+                    pass
+
+        # 3. Try any {...} block with a calibration-relevant key
+        if data is None:
+            brace_pattern = re.compile(r"\{[^{}]*\}", re.DOTALL)
+            for m in brace_pattern.finditer(stripped):
+                try:
+                    candidate = json.loads(m.group(0))
+                    if "usefulness_score" in candidate or "street_visible" in candidate:
+                        data = candidate
+                        break
+                except json.JSONDecodeError:
+                    continue
+
+        if data is None:
+            logger.warning(
+                "Could not parse calibration response as JSON: %s", text[:300]
+            )
+            return dict(_CALIBRATION_FALLBACK)
+
+        # Normalise fields with sensible defaults
+        street_visible = bool(data.get("street_visible", False))
+        parking_area_visible = bool(data.get("parking_area_visible", False))
+
+        parking_side = str(data.get("parking_side", "none")).lower()
+        if parking_side not in ("near", "far", "both", "none"):
+            parking_side = "none"
+
+        opposite_restriction = str(data.get("opposite_restriction", "unclear")).lower()
+        if opposite_restriction not in ("double_yellow", "single_yellow", "none", "unclear"):
+            opposite_restriction = "unclear"
+
+        obstructions = data.get("obstructions", ["none"])
+        if not isinstance(obstructions, list):
+            obstructions = ["none"]
+
+        home_spot_visible = bool(data.get("home_spot_visible", False))
+
+        usefulness_score = data.get("usefulness_score", 0)
+        try:
+            usefulness_score = max(0, min(10, int(usefulness_score)))
+        except (ValueError, TypeError):
+            usefulness_score = 0
+
+        description = str(data.get("description", "No description provided"))
+
+        return {
+            "street_visible": street_visible,
+            "parking_area_visible": parking_area_visible,
+            "parking_side": parking_side,
+            "opposite_restriction": opposite_restriction,
+            "obstructions": obstructions,
+            "home_spot_visible": home_spot_visible,
+            "usefulness_score": usefulness_score,
+            "description": description,
+        }
 
     # ------------------------------------------------------------------
     # Prompt builders

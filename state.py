@@ -4,11 +4,15 @@ state.py — SQLite-backed state and history manager for Smart Parking Monitor.
 Stores all parking checks, state changes, and provides statistics queries.
 """
 
+import json
 import logging
 import sqlite3
 import threading
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
+
+if TYPE_CHECKING:
+    from auto_calibrate import CalibrationResult
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +58,31 @@ class ParkingState:
                     old_status  TEXT,
                     new_status  TEXT    NOT NULL,
                     description TEXT
+                );
+
+                CREATE TABLE IF NOT EXISTS calibrations (
+                    id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp            TEXT    DEFAULT CURRENT_TIMESTAMP,
+                    home_position        INTEGER NOT NULL,
+                    scan_positions       TEXT    NOT NULL,
+                    parking_side         TEXT    NOT NULL DEFAULT 'near',
+                    opposite_restriction TEXT    NOT NULL DEFAULT 'double_yellow',
+                    street_description   TEXT,
+                    angle_count          INTEGER DEFAULT 0
+                );
+
+                CREATE TABLE IF NOT EXISTS calibration_angles (
+                    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                    calibration_id   INTEGER NOT NULL,
+                    angle            INTEGER NOT NULL,
+                    street_visible   INTEGER DEFAULT 0,
+                    parking_visible  INTEGER DEFAULT 0,
+                    parking_side     TEXT,
+                    obstructions     TEXT,
+                    home_spot        INTEGER DEFAULT 0,
+                    usefulness       INTEGER DEFAULT 0,
+                    description      TEXT,
+                    FOREIGN KEY (calibration_id) REFERENCES calibrations(id)
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_checks_timestamp
@@ -296,8 +325,121 @@ class ParkingState:
         return result
 
     # ------------------------------------------------------------------
+    # Calibration
+    # ------------------------------------------------------------------
+
+    def save_calibration(self, result: "CalibrationResult") -> int:
+        """
+        Save a calibration result to the database.
+
+        Args:
+            result: CalibrationResult dataclass from auto_calibrate.py.
+
+        Returns:
+            The integer ID of the newly inserted calibration row.
+        """
+        with self._lock:
+            with self._conn:
+                cur = self._conn.execute(
+                    """
+                    INSERT INTO calibrations (
+                        timestamp, home_position, scan_positions, parking_side,
+                        opposite_restriction, street_description, angle_count
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        result.timestamp,
+                        result.home_position,
+                        json.dumps(result.scan_positions),
+                        result.parking_side,
+                        result.opposite_restriction,
+                        result.street_description,
+                        len(result.angle_scores),
+                    ),
+                )
+                calibration_id = cur.lastrowid
+
+                for score in result.angle_scores:
+                    self._conn.execute(
+                        """
+                        INSERT INTO calibration_angles (
+                            calibration_id, angle, street_visible, parking_visible,
+                            parking_side, obstructions, home_spot, usefulness, description
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            calibration_id,
+                            score.get("angle", 0),
+                            int(bool(score.get("street_visible", False))),
+                            int(bool(score.get("parking_area_visible", False))),
+                            score.get("parking_side", "none"),
+                            json.dumps(score.get("obstructions", [])),
+                            int(bool(score.get("home_spot_visible", False))),
+                            score.get("usefulness_score", 0),
+                            score.get("description", ""),
+                        ),
+                    )
+
+        logger.info(
+            "Saved calibration ID=%d: home=%d, positions=%s",
+            calibration_id,
+            result.home_position,
+            result.scan_positions,
+        )
+        return calibration_id
+
+    def get_latest_calibration(self) -> Optional[dict]:
+        """
+        Return the most recent calibration record as a dict, or None if none exist.
+
+        The ``scan_positions`` field is decoded from JSON to a list of ints.
+        """
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM calibrations ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+        if row is None:
+            return None
+        data = dict(row)
+        try:
+            data["scan_positions"] = json.loads(data.get("scan_positions", "[]"))
+        except (json.JSONDecodeError, TypeError):
+            data["scan_positions"] = []
+        return data
+
+    def get_calibration_angles(self, calibration_id: int) -> list:
+        """
+        Return all per-angle scores for a given calibration run.
+
+        Args:
+            calibration_id: The ID of the calibration to look up.
+
+        Returns:
+            List of dicts, one per angle, ordered by angle.
+        """
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM calibration_angles WHERE calibration_id = ? ORDER BY angle",
+                (calibration_id,),
+            ).fetchall()
+        result = []
+        for row in rows:
+            d = dict(row)
+            try:
+                d["obstructions"] = json.loads(d.get("obstructions", "[]"))
+            except (json.JSONDecodeError, TypeError):
+                d["obstructions"] = []
+            result.append(d)
+        return result
+
+    # ------------------------------------------------------------------
     # Maintenance
     # ------------------------------------------------------------------
+
+    def close(self) -> None:
+        """Close the database connection."""
+        self._conn.close()
+        logger.debug("Database connection closed")
 
     def cleanup_old_records(self, days: int = 90) -> int:
         """
