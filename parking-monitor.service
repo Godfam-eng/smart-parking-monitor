@@ -1,0 +1,24 @@
+[Unit]
+Description=Smart Parking Monitor - AI-powered parking space detection
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+WorkingDirectory=/home/pi/smart-parking-monitor
+Environment=PATH=/home/pi/smart-parking-monitor/venv/bin:/usr/bin:/bin
+EnvironmentFile=/home/pi/smart-parking-monitor/.env
+ExecStart=/home/pi/smart-parking-monitor/venv/bin/python main.py
+Restart=on-failure
+RestartSec=30
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=parking-monitor
+WatchdogSec=600
+
+[Install]
+WantedBy=multi-user.target
