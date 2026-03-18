@@ -68,8 +68,9 @@ async def _send_status_reply(update: Update) -> None:
     """Shared logic: grab frame, analyse, reply with result."""
     await update.message.reply_text("📸 Capturing frame and analysing…")
     try:
-        image_bytes = _camera.grab_frame()
-        result = _vision.check_home_spot(image_bytes)
+        loop = asyncio.get_running_loop()
+        image_bytes = await loop.run_in_executor(None, _camera.grab_frame)
+        result = await loop.run_in_executor(None, _vision.check_home_spot, image_bytes)
         status = result.get("status", "UNKNOWN")
         confidence = result.get("confidence", "low")
         description = result.get("description", "")
@@ -91,7 +92,8 @@ async def _send_scan_reply(update: Update) -> None:
     """Shared logic: full street scan, analyse, report nearest free space."""
     await update.message.reply_text("🔍 Scanning the street… this may take 30–60 seconds.")
     try:
-        positions = _camera.scan_street()
+        loop = asyncio.get_running_loop()
+        positions = await loop.run_in_executor(None, _camera.scan_street)
         if not positions:
             await update.message.reply_text("⚠️ No frames captured during scan.")
             return
@@ -100,7 +102,9 @@ async def _send_scan_reply(update: Update) -> None:
         summary_lines = []
 
         for pos in positions:
-            result = _vision.check_scan_position(pos["image"], pos["position_name"])
+            result = await loop.run_in_executor(
+                None, _vision.check_scan_position, pos["image"], pos["position_name"]
+            )
             status = result.get("status", "UNKNOWN")
             confidence = result.get("confidence", "low")
             description = result.get("description", "")
@@ -135,7 +139,8 @@ async def _send_scan_reply(update: Update) -> None:
 async def _send_stats_reply(update: Update) -> None:
     """Shared logic: fetch and format database stats."""
     try:
-        stats = _state.get_stats()
+        loop = asyncio.get_running_loop()
+        stats = await loop.run_in_executor(None, _state.get_stats)
         last = stats.get("last_check") or {}
 
         busiest_str = ", ".join(
@@ -208,7 +213,8 @@ async def cmd_snapshot(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     """/snapshot — Send current camera frame without AI analysis."""
     await update.message.reply_text("📸 Grabbing snapshot…")
     try:
-        image_bytes = _camera.get_snapshot()
+        loop = asyncio.get_running_loop()
+        image_bytes = await loop.run_in_executor(None, _camera.get_snapshot)
         await update.message.reply_photo(
             photo=image_bytes, caption="📷 Current camera view"
         )
@@ -289,7 +295,8 @@ def start_bot(
     app = _build_application(cfg)
 
     # Run the bot's event loop in this thread
-    asyncio.set_event_loop(asyncio.new_event_loop())
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
     app.run_polling(drop_pending_updates=True)
 
 
