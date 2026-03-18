@@ -61,7 +61,12 @@ def _make_mocks():
         "last_check": {"timestamp": "2026-01-01 12:00:00", "status": "FREE"},
         "days_of_data": 7,
     }
-    state.get_current_status.return_value = None
+    state.get_current_status.return_value = {
+        "status": "FREE",
+        "confidence": "high",
+        "description": "No cars visible.",
+        "timestamp": "2026-01-01 12:00:00",
+    }
 
     return cfg, camera, vision, state
 
@@ -105,10 +110,11 @@ class TestApiEndpoints(AioHTTPTestCase):
 
     @unittest_run_loop
     async def test_status_text_occupied(self):
-        api_module._vision.check_home_spot.return_value = {
+        api_module._state.get_current_status.return_value = {
             "status": "OCCUPIED",
             "confidence": "high",
             "description": "A blue car is parked.",
+            "timestamp": "2026-01-01 12:00:00",
         }
         resp = await self.client.get("/status")
         assert resp.status == 200
@@ -156,15 +162,16 @@ class TestApiEndpoints(AioHTTPTestCase):
 
     @unittest_run_loop
     async def test_status_text_unknown(self):
-        api_module._vision.check_home_spot.return_value = {
+        api_module._state.get_current_status.return_value = {
             "status": "UNKNOWN",
             "confidence": "low",
             "description": "Cannot determine.",
+            "timestamp": "2026-01-01 12:00:00",
         }
         resp = await self.client.get("/status")
         assert resp.status == 200
         text = await resp.text()
-        assert "Unable" in text or "unable" in text.lower() or "determine" in text.lower()
+        assert "unclear" in text.lower() or "unknown" in text.lower()
 
     @unittest_run_loop
     async def test_scan_text_no_free_spaces(self):
@@ -180,3 +187,33 @@ class TestApiEndpoints(AioHTTPTestCase):
         assert resp.status == 200
         text = await resp.text()
         assert "No free" in text or "no free" in text.lower()
+
+    @unittest_run_loop
+    async def test_status_text_no_data(self):
+        """When no cached data exists, /status returns a startup message."""
+        api_module._state.get_current_status.return_value = None
+        resp = await self.client.get("/status")
+        assert resp.status == 200
+        text = await resp.text()
+        assert "starting up" in text.lower() or "no parking" in text.lower()
+
+    @unittest_run_loop
+    async def test_status_json_no_data(self):
+        """When no cached data exists, /status/json returns 503."""
+        api_module._state.get_current_status.return_value = None
+        resp = await self.client.get("/status/json")
+        assert resp.status == 503
+
+    @unittest_run_loop
+    async def test_status_live_calls_claude(self):
+        """/status/live should do a fresh Claude call and return free/occupied text."""
+        api_module._state.get_current_status.return_value = None  # no cached state
+        api_module._vision.check_home_spot.return_value = {
+            "status": "FREE",
+            "confidence": "high",
+            "description": "No cars visible.",
+        }
+        resp = await self.client.get("/status/live")
+        assert resp.status == 200
+        text = await resp.text()
+        assert "free" in text.lower()

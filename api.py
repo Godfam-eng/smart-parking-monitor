@@ -62,7 +62,44 @@ async def handle_root(request: web.Request) -> web.Response:
 
 
 async def handle_status_text(request: web.Request) -> web.Response:
-    """GET /status — Plain text for Siri Shortcuts."""
+    """GET /status — Plain text status for Siri Shortcuts (cached, instant)."""
+    current = _state.get_current_status()
+    if current is None:
+        return web.Response(
+            text="No parking data yet. The monitor is still starting up.",
+            content_type="text/plain",
+        )
+    status = current.get("status", "UNKNOWN")
+    description = current.get("description", "")
+    if status == "FREE":
+        text = f"Your parking space is free. {description}"
+    elif status == "OCCUPIED":
+        text = f"Your parking space is occupied. {description}"
+    else:
+        text = f"Parking status is unclear. {description}"
+    return web.Response(text=text, content_type="text/plain")
+
+
+async def handle_status_json(request: web.Request) -> web.Response:
+    """GET /status/json — Cached JSON status (instant, no Claude call)."""
+    current = _state.get_current_status()
+    if current is None:
+        return web.json_response(
+            {"status": "UNKNOWN", "description": "No parking data yet. The monitor is still starting up."},
+            status=503,
+        )
+    return web.json_response(
+        {
+            "status": current.get("status", "UNKNOWN"),
+            "confidence": current.get("confidence", "low"),
+            "description": current.get("description", ""),
+            "timestamp": current.get("timestamp", ""),
+        }
+    )
+
+
+async def handle_status_live_text(request: web.Request) -> web.Response:
+    """GET /status/live — Fresh Claude call (slow, costs money; use sparingly)."""
     try:
         loop = asyncio.get_running_loop()
         image_bytes = await loop.run_in_executor(None, _camera.grab_frame)
@@ -80,7 +117,7 @@ async def handle_status_text(request: web.Request) -> web.Response:
         return web.Response(text=text, content_type="text/plain")
 
     except Exception as exc:
-        logger.error("Error in /status handler: %s", exc)
+        logger.error("Error in /status/live handler: %s", exc)
         return web.Response(
             text=f"Error checking parking status: {exc}",
             status=500,
@@ -88,8 +125,8 @@ async def handle_status_text(request: web.Request) -> web.Response:
         )
 
 
-async def handle_status_json(request: web.Request) -> web.Response:
-    """GET /status/json — Full JSON status."""
+async def handle_status_live_json(request: web.Request) -> web.Response:
+    """GET /status/live/json — Fresh Claude call, full JSON response."""
     try:
         loop = asyncio.get_running_loop()
         image_bytes = await loop.run_in_executor(None, _camera.grab_frame)
@@ -103,7 +140,7 @@ async def handle_status_json(request: web.Request) -> web.Response:
             }
         )
     except Exception as exc:
-        logger.error("Error in /status/json handler: %s", exc)
+        logger.error("Error in /status/live/json handler: %s", exc)
         return web.json_response({"error": str(exc)}, status=500)
 
 
@@ -128,9 +165,9 @@ async def handle_scan_text(request: web.Request) -> web.Response:
                 free_positions.append((pos, result))
 
         if free_positions:
-            nearest = free_positions[0]
-            pos_name = nearest[0]["position_name"]
-            description = nearest[1].get("description", "")
+            first = free_positions[0]
+            pos_name = first[0]["position_name"]
+            description = first[1].get("description", "")
             text = (
                 f"Your spot is taken, but there's a free space {pos_name} on the street. "
                 f"{description}"
@@ -241,6 +278,8 @@ def _build_app() -> web.Application:
     app.router.add_get("/", handle_root)
     app.router.add_get("/status", handle_status_text)
     app.router.add_get("/status/json", handle_status_json)
+    app.router.add_get("/status/live", handle_status_live_text)
+    app.router.add_get("/status/live/json", handle_status_live_json)
     app.router.add_get("/scan", handle_scan_text)
     app.router.add_get("/scan/json", handle_scan_json)
     app.router.add_get("/snapshot", handle_snapshot)
@@ -275,10 +314,13 @@ def start_api(
     logger.info("Starting HTTP API on %s:%d", cfg.API_HOST, cfg.API_PORT)
     app = _build_app()
 
-    # Run inside a new event loop (this function runs in a thread)
+    # Run inside a new event loop (this function runs in a thread).
+    # handle_signals=False prevents aiohttp from trying to install signal
+    # handlers, which only work in the main thread and would raise
+    # ValueError: set_wakeup_fd only works in main thread of the main interpreter.
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    web.run_app(app, host=cfg.API_HOST, port=cfg.API_PORT, access_log=None)
+    web.run_app(app, host=cfg.API_HOST, port=cfg.API_PORT, access_log=None, handle_signals=False)
 
 
 # ------------------------------------------------------------------

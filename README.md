@@ -40,7 +40,7 @@ Smart Parking Monitor watches your UK terraced street 24/7 through a window-moun
               │ RTSP / pytapo
 ┌─────────────▼──────────┐
 │     Tapo C225 Camera   │
-│   (pan/tilt, 2K, PoE)  │
+│   (pan/tilt, 2K, Wi-Fi)│
 └────────────────────────┘
 ```
 
@@ -68,7 +68,7 @@ Smart Parking Monitor watches your UK terraced street 24/7 through a window-moun
 |------|-------|-------|
 | Single board computer | Raspberry Pi 5 (16GB RAM) | 8GB also works |
 | Camera | Tapo C225 | Pan/tilt, 2K, RTSP streaming |
-| Storage | 64GB+ microSD (A2 class) | Or USB SSD for reliability |
+| Storage | 32GB+ microSD (A2 class) | Or USB SSD for reliability |
 | Network | Ethernet or WiFi | Ethernet recommended |
 | Power | Official Pi 5 USB-C PSU | 5V/5A |
 | Mount | Suction cup / window mount | Point at street from inside |
@@ -180,8 +180,10 @@ You can also send natural language messages:
 
 | Endpoint | Response | Description |
 |----------|----------|-------------|
-| `GET /status` | Plain text | Siri-friendly status |
-| `GET /status/json` | JSON | Full status with confidence |
+| `GET /status` | Plain text | Siri-friendly cached status (instant) |
+| `GET /status/json` | JSON | Cached status with confidence (instant) |
+| `GET /status/live` | Plain text | Fresh Claude call (real-time, ~3-8s) |
+| `GET /status/live/json` | JSON | Fresh Claude call, full JSON |
 | `GET /scan` | Plain text | Siri-friendly scan result |
 | `GET /scan/json` | JSON | Full scan results array |
 | `GET /snapshot` | JPEG | Current camera frame |
@@ -193,8 +195,8 @@ See [docs/API_REFERENCE.md](docs/API_REFERENCE.md) for full documentation.
 ### Street Scan
 
 When triggered via `/scan` or `GET /scan`, the camera pans through all configured
-`SCAN_POSITIONS`. Claude analyses each frame for any visible free spaces. The nearest
-free space is reported first.
+`SCAN_POSITIONS`. Claude analyses each frame for any visible free spaces. The first
+free space found (in scan order) is reported.
 
 ---
 

@@ -139,10 +139,15 @@ def load_config() -> Config:
     )
 
 
-def validate(config: Config) -> bool:
+def validate(config: Config, *, require_telegram: bool = True) -> bool:
     """
     Validate that all required configuration keys are present and numeric values
     are within acceptable ranges.
+
+    Args:
+        config: The Config instance to validate.
+        require_telegram: When False, TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID
+            are not required (use when running with --skip-bot).
 
     Returns True if valid, False otherwise.
     Prints clear error messages for any missing required keys.
@@ -152,9 +157,11 @@ def validate(config: Config) -> bool:
         "TAPO_USER": config.TAPO_USER,
         "TAPO_PASSWORD": config.TAPO_PASSWORD,
         "ANTHROPIC_API_KEY": config.ANTHROPIC_API_KEY,
-        "TELEGRAM_BOT_TOKEN": config.TELEGRAM_BOT_TOKEN,
-        "TELEGRAM_CHAT_ID": config.TELEGRAM_CHAT_ID,
     }
+
+    if require_telegram:
+        required["TELEGRAM_BOT_TOKEN"] = config.TELEGRAM_BOT_TOKEN
+        required["TELEGRAM_CHAT_ID"] = config.TELEGRAM_CHAT_ID
 
     missing = [key for key, value in required.items() if not value]
 

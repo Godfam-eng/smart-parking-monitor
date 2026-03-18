@@ -13,6 +13,7 @@ IMPORTANT — moveMotor() is relative, not absolute:
 """
 
 import logging
+import threading
 import time
 import urllib.parse
 from typing import List, Optional
@@ -65,6 +66,10 @@ class TapoCamera:
         # Software-tracked position — only valid after calibrate_position()
         self._current_pan: int = 0
         self._current_tilt: int = 0
+        # Re-entrant lock: allows scan_street() to call move_to_angle() and
+        # grab_frame() internally without deadlocking, while still serialising
+        # concurrent access from the monitoring loop, bot, and API threads.
+        self._lock = threading.RLock()
 
     # ------------------------------------------------------------------
     # Connection
@@ -80,21 +85,22 @@ class TapoCamera:
         Raises:
             ConnectionError: if the camera cannot be reached.
         """
-        try:
-            self.tapo = Tapo(
-                host=self.config.TAPO_IP,
-                user=self.config.TAPO_USER,
-                password=self.config.TAPO_PASSWORD,
-            )
-            logger.info(
-                "Connected to Tapo camera at %s", self.config.TAPO_IP
-            )
-            self.calibrate_position()
-        except ConnectionError:
-            raise
-        except Exception as exc:
-            logger.error("Failed to connect to Tapo camera at %s: %s", self.config.TAPO_IP, exc)
-            raise ConnectionError(f"Cannot connect to Tapo camera: {exc}") from exc
+        with self._lock:
+            try:
+                self.tapo = Tapo(
+                    host=self.config.TAPO_IP,
+                    user=self.config.TAPO_USER,
+                    password=self.config.TAPO_PASSWORD,
+                )
+                logger.info(
+                    "Connected to Tapo camera at %s", self.config.TAPO_IP
+                )
+                self.calibrate_position()
+            except ConnectionError:
+                raise
+            except Exception as exc:
+                logger.error("Failed to connect to Tapo camera at %s: %s", self.config.TAPO_IP, exc)
+                raise ConnectionError(f"Cannot connect to Tapo camera: {exc}") from exc
 
     # ------------------------------------------------------------------
     # Position calibration
@@ -113,23 +119,24 @@ class TapoCamera:
         Raises:
             RuntimeError: if the camera is not connected.
         """
-        if self.tapo is None:
-            raise RuntimeError("Camera not connected. Call connect() first.")
+        with self._lock:
+            if self.tapo is None:
+                raise RuntimeError("Camera not connected. Call connect() first.")
 
-        logger.info("Calibrating camera position: driving to left end-stop…")
-        try:
-            # A large negative sweep always reaches the physical left end-stop
-            self.tapo.moveMotor(_CALIBRATION_PAN_SWEEP, 0)
-            # Wait for the camera to hit the stop and fully settle
-            time.sleep(_CALIBRATION_SETTLE_TIME)
-            self._current_pan = _PAN_MIN
-            self._current_tilt = 0
-            logger.info(
-                "Camera calibrated: position reset to pan=%d (left end-stop)", _PAN_MIN
-            )
-        except Exception as exc:
-            logger.error("Camera position calibration failed: %s", exc)
-            raise
+            logger.info("Calibrating camera position: driving to left end-stop…")
+            try:
+                # A large negative sweep always reaches the physical left end-stop
+                self.tapo.moveMotor(_CALIBRATION_PAN_SWEEP, 0)
+                # Wait for the camera to hit the stop and fully settle
+                time.sleep(_CALIBRATION_SETTLE_TIME)
+                self._current_pan = _PAN_MIN
+                self._current_tilt = 0
+                logger.info(
+                    "Camera calibrated: position reset to pan=%d (left end-stop)", _PAN_MIN
+                )
+            except Exception as exc:
+                logger.error("Camera position calibration failed: %s", exc)
+                raise
 
     # ------------------------------------------------------------------
     # RTSP helpers
@@ -157,44 +164,45 @@ class TapoCamera:
         Raises:
             RuntimeError: if all attempts fail.
         """
-        rtsp_url = self.get_rtsp_url()
-        last_error: Optional[Exception] = None
+        with self._lock:
+            rtsp_url = self.get_rtsp_url()
+            last_error: Optional[Exception] = None
 
-        for attempt in range(1, 4):
-            cap: Optional[cv2.VideoCapture] = None
-            try:
-                logger.debug("Grabbing frame (attempt %d/3) from %s", attempt, self.config.TAPO_IP)
-                cap = cv2.VideoCapture(rtsp_url)
-                cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            for attempt in range(1, 4):
+                cap: Optional[cv2.VideoCapture] = None
+                try:
+                    logger.debug("Grabbing frame (attempt %d/3) from %s", attempt, self.config.TAPO_IP)
+                    cap = cv2.VideoCapture(rtsp_url)
+                    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
-                if not cap.isOpened():
-                    raise RuntimeError("VideoCapture failed to open RTSP stream")
+                    if not cap.isOpened():
+                        raise RuntimeError("VideoCapture failed to open RTSP stream")
 
-                # Drain the buffer so we get a fresh frame
-                for _ in range(5):
-                    cap.grab()
+                    # Drain the buffer so we get a fresh frame
+                    for _ in range(5):
+                        cap.grab()
 
-                ret, frame = cap.read()
-                if not ret or frame is None:
-                    raise RuntimeError("cap.read() returned no frame")
+                    ret, frame = cap.read()
+                    if not ret or frame is None:
+                        raise RuntimeError("cap.read() returned no frame")
 
-                success, buffer = cv2.imencode(".jpg", frame)
-                if not success:
-                    raise RuntimeError("cv2.imencode failed")
+                    success, buffer = cv2.imencode(".jpg", frame)
+                    if not success:
+                        raise RuntimeError("cv2.imencode failed")
 
-                logger.debug("Frame captured successfully (%d bytes)", len(buffer.tobytes()))
-                return buffer.tobytes()
+                    logger.debug("Frame captured successfully (%d bytes)", len(buffer.tobytes()))
+                    return buffer.tobytes()
 
-            except Exception as exc:
-                last_error = exc
-                logger.warning("Frame grab attempt %d failed: %s", attempt, exc)
-                if attempt < 3:
-                    time.sleep(2)
-            finally:
-                if cap is not None:
-                    cap.release()
+                except Exception as exc:
+                    last_error = exc
+                    logger.warning("Frame grab attempt %d failed: %s", attempt, exc)
+                    if attempt < 3:
+                        time.sleep(2)
+                finally:
+                    if cap is not None:
+                        cap.release()
 
-        raise RuntimeError(f"Failed to grab frame after 3 attempts: {last_error}") from last_error
+            raise RuntimeError(f"Failed to grab frame after 3 attempts: {last_error}") from last_error
 
     # ------------------------------------------------------------------
     # Pan/tilt control
@@ -213,31 +221,32 @@ class TapoCamera:
             tilt_angle: Absolute vertical angle in degrees (negative = down,
                         positive = up).  Clamped to [_TILT_MIN, _TILT_MAX].
         """
-        if self.tapo is None:
-            raise RuntimeError("Camera not connected. Call connect() first.")
+        with self._lock:
+            if self.tapo is None:
+                raise RuntimeError("Camera not connected. Call connect() first.")
 
-        # Clamp to safe hardware range
-        pan_target = max(_PAN_MIN, min(_PAN_MAX, pan_angle))
-        tilt_target = max(_TILT_MIN, min(_TILT_MAX, tilt_angle))
+            # Clamp to safe hardware range
+            pan_target = max(_PAN_MIN, min(_PAN_MAX, pan_angle))
+            tilt_target = max(_TILT_MIN, min(_TILT_MAX, tilt_angle))
 
-        # Compute relative deltas from the last known position
-        pan_delta = pan_target - self._current_pan
-        tilt_delta = tilt_target - self._current_tilt
+            # Compute relative deltas from the last known position
+            pan_delta = pan_target - self._current_pan
+            tilt_delta = tilt_target - self._current_tilt
 
-        try:
-            logger.info(
-                "Moving camera to pan=%d, tilt=%d (delta: pan=%+d, tilt=%+d)",
-                pan_target, tilt_target, pan_delta, tilt_delta,
-            )
-            self.tapo.moveMotor(pan_delta, tilt_delta)
-            # Update tracked position BEFORE sleep so it's always accurate
-            self._current_pan = pan_target
-            self._current_tilt = tilt_target
-            logger.debug("Waiting %.1f s for camera to stabilise", self.config.SCAN_SETTLE_TIME)
-            time.sleep(self.config.SCAN_SETTLE_TIME)
-        except Exception as exc:
-            logger.error("Failed to move camera to pan=%d tilt=%d: %s", pan_target, tilt_target, exc)
-            raise
+            try:
+                logger.info(
+                    "Moving camera to pan=%d, tilt=%d (delta: pan=%+d, tilt=%+d)",
+                    pan_target, tilt_target, pan_delta, tilt_delta,
+                )
+                self.tapo.moveMotor(pan_delta, tilt_delta)
+                # Update tracked position BEFORE sleep so it's always accurate
+                self._current_pan = pan_target
+                self._current_tilt = tilt_target
+                logger.debug("Waiting %.1f s for camera to stabilise", self.config.SCAN_SETTLE_TIME)
+                time.sleep(self.config.SCAN_SETTLE_TIME)
+            except Exception as exc:
+                logger.error("Failed to move camera to pan=%d tilt=%d: %s", pan_target, tilt_target, exc)
+                raise
 
     def move_to_home(self) -> None:
         """Return camera to the configured home position."""
@@ -257,43 +266,44 @@ class TapoCamera:
         Returns:
             List of dicts: ``{"angle": int, "image": bytes, "position_name": str}``
         """
-        results: List[dict] = []
+        with self._lock:
+            results: List[dict] = []
 
-        try:
-            for angle in self.config.SCAN_POSITIONS:
-                position_name = _angle_to_position_name(angle)
-                logger.info(
-                    "Scanning position: %s (angle=%d)", position_name, angle
-                )
-                try:
-                    self.move_to_angle(angle)
-                    image_bytes = self.grab_frame()
-                    results.append(
-                        {
-                            "angle": angle,
-                            "image": image_bytes,
-                            "position_name": position_name,
-                        }
-                    )
-                    logger.debug(
-                        "Captured frame at %s (%d bytes)", position_name, len(image_bytes)
-                    )
-                except Exception as exc:
-                    logger.error(
-                        "Failed to capture at position %s (angle=%d): %s",
-                        position_name,
-                        angle,
-                        exc,
-                    )
-                    # Continue scanning other positions
-
-        finally:
             try:
-                self.move_to_home()
-            except Exception as exc:
-                logger.error("Failed to return to home position after scan: %s", exc)
+                for angle in self.config.SCAN_POSITIONS:
+                    position_name = _angle_to_position_name(angle)
+                    logger.info(
+                        "Scanning position: %s (angle=%d)", position_name, angle
+                    )
+                    try:
+                        self.move_to_angle(angle)
+                        image_bytes = self.grab_frame()
+                        results.append(
+                            {
+                                "angle": angle,
+                                "image": image_bytes,
+                                "position_name": position_name,
+                            }
+                        )
+                        logger.debug(
+                            "Captured frame at %s (%d bytes)", position_name, len(image_bytes)
+                        )
+                    except Exception as exc:
+                        logger.error(
+                            "Failed to capture at position %s (angle=%d): %s",
+                            position_name,
+                            angle,
+                            exc,
+                        )
+                        # Continue scanning other positions
 
-        return results
+            finally:
+                try:
+                    self.move_to_home()
+                except Exception as exc:
+                    logger.error("Failed to return to home position after scan: %s", exc)
+
+            return results
 
     # ------------------------------------------------------------------
     # Convenience

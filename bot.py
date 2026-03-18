@@ -122,7 +122,7 @@ async def _send_scan_reply(update: Update) -> None:
         if free_positions:
             best_pos, best_result = free_positions[0]
             caption = (
-                f"✅ Nearest free space: *{best_pos['position_name'].title()}*\n"
+                f"✅ First available free space: *{best_pos['position_name'].title()}*\n"
                 f"{best_result.get('description', '')}"
             )
             await update.message.reply_photo(
@@ -294,10 +294,13 @@ def start_bot(
     logger.info("Starting Telegram bot…")
     app = _build_application(cfg)
 
-    # Run the bot's event loop in this thread
+    # Run the bot's event loop in this thread.
+    # stop_signals=None prevents python-telegram-bot from trying to install
+    # signal handlers, which only work in the main thread and would raise
+    # ValueError: set_wakeup_fd only works in main thread of the main interpreter.
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    app.run_polling(drop_pending_updates=True)
+    app.run_polling(drop_pending_updates=True, stop_signals=None)
 
 
 # ------------------------------------------------------------------

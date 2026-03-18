@@ -135,3 +135,25 @@ class TestValidation:
             PUSHOVER_API_TOKEN="",
         )
         assert validate(cfg) is True
+
+    def test_validate_skip_bot_no_telegram_required(self):
+        """With require_telegram=False, missing Telegram credentials are allowed."""
+        cfg = Config(
+            TAPO_IP="192.168.1.1",
+            TAPO_USER="admin",
+            TAPO_PASSWORD="password",
+            ANTHROPIC_API_KEY="sk-ant-key",
+            # No TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID
+        )
+        assert validate(cfg, require_telegram=False) is True
+
+    def test_validate_fails_missing_telegram_when_required(self):
+        """With require_telegram=True (default), missing Telegram creds fail."""
+        cfg = Config(
+            TAPO_IP="192.168.1.1",
+            TAPO_USER="admin",
+            TAPO_PASSWORD="password",
+            ANTHROPIC_API_KEY="sk-ant-key",
+            # No TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID
+        )
+        assert validate(cfg) is False
