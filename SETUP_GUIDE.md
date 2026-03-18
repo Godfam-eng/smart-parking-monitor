@@ -112,6 +112,39 @@ Leave `API_KEY` blank if your Pi is behind Tailscale (the default setup).  Set i
 
 ---
 
+## Step 6a: Customise Street Context
+
+The AI prompts are pre-configured for a **one-sided parking UK terraced street** (parking on the near/camera side, double yellow lines on the opposite side). If your street matches this layout, you don't need to change anything.
+
+If your street is different, update these variables in `.env`:
+
+```bash
+# Which side of the road has parking?
+# "near" = camera side (same side as the house) — most UK terraced streets
+# "far"  = opposite side of the road
+STREET_PARKING_SIDE=near
+
+# What restriction applies to the opposite side?
+# Options: none, single_yellow, double_yellow, no_parking
+OPPOSITE_SIDE_RESTRICTION=double_yellow
+
+# Your vehicle length in metres.
+# Claude uses this to decide if a gap is large enough to fit your car.
+VEHICLE_LENGTH_METRES=4.5
+
+# Minimum gap in metres to report as a free space.
+# Gaps smaller than this will not be counted as available.
+MIN_SPACE_METRES=5.0
+```
+
+**What the AI ignores in all cases:**
+- Moving vehicles (traffic driving past — not parked)
+- Vehicles on the opposite side of the road (double yellow lines)
+- Foreground objects visible through the window (stone wall, wheelie bin, garden, window frame)
+- Window glass reflections, glare, and condensation
+
+---
+
 ## Step 7: Verify Camera Connectivity
 
 Before running the full system, confirm the camera is reachable:

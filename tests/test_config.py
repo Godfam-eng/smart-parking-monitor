@@ -51,7 +51,7 @@ class TestConfigDefaults:
         cfg = load_config()
         assert cfg.TAPO_RTSP_PORT == 554
         assert cfg.TAPO_STREAM_PATH == "stream1"
-        assert cfg.CLAUDE_MODEL == "claude-sonnet-4-20250514"
+        assert cfg.CLAUDE_MODEL == "claude-sonnet-4-5"
         assert cfg.CLAUDE_MAX_TOKENS == 1024
         assert cfg.CHECK_INTERVAL == 180
         assert cfg.CONFIDENCE_THRESHOLD == "medium"

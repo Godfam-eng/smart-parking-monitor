@@ -129,7 +129,7 @@ See [SETUP_GUIDE.md](SETUP_GUIDE.md) for the full step-by-step setup.
 | `TAPO_RTSP_PORT` | `554` | RTSP port |
 | `TAPO_STREAM_PATH` | `stream1` | RTSP stream path |
 | `ANTHROPIC_API_KEY` | — | Claude API key (required) |
-| `CLAUDE_MODEL` | `claude-sonnet-4-20250514` | Claude model to use |
+| `CLAUDE_MODEL` | `claude-sonnet-4-5` | Claude model to use |
 | `CLAUDE_MAX_TOKENS` | `1024` | Max response tokens |
 | `TELEGRAM_BOT_TOKEN` | — | Telegram bot token (required) |
 | `TELEGRAM_CHAT_ID` | — | Your Telegram chat ID (required) |
@@ -145,6 +145,10 @@ See [SETUP_GUIDE.md](SETUP_GUIDE.md) for the full step-by-step setup.
 | `API_HOST` | `0.0.0.0` | API server bind address |
 | `API_PORT` | `8080` | API server port |
 | `DB_PATH` | `parking_history.db` | SQLite database path |
+| `STREET_PARKING_SIDE` | `near` | Which side has parking: `near` (camera side) or `far` (opposite) |
+| `OPPOSITE_SIDE_RESTRICTION` | `double_yellow` | Restriction on the opposite side: `none`, `single_yellow`, `double_yellow`, `no_parking` |
+| `VEHICLE_LENGTH_METRES` | `4.5` | Owner's vehicle length (metres) for space-fit assessment |
+| `MIN_SPACE_METRES` | `5.0` | Minimum gap (metres) to count as a free space |
 
 ---
 

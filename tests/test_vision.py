@@ -15,12 +15,14 @@ from vision import ParkingVision, _FALLBACK_RESPONSE
 def cfg():
     return Config(
         ANTHROPIC_API_KEY="sk-ant-test",
-        CLAUDE_MODEL="claude-sonnet-4-20250514",
+        CLAUDE_MODEL="claude-sonnet-4-5",
         CLAUDE_MAX_TOKENS=1024,
         PARKING_ZONE_TOP=30,
         PARKING_ZONE_BOTTOM=80,
         PARKING_ZONE_LEFT=20,
         PARKING_ZONE_RIGHT=80,
+        VEHICLE_LENGTH_METRES=4.5,
+        MIN_SPACE_METRES=5.0,
     )
 
 
@@ -104,10 +106,46 @@ class TestPromptBuilding:
         assert "OCCUPIED" in prompt
         assert "confidence" in prompt
 
+    def test_home_prompt_mentions_near_side(self, vision):
+        prompt = vision._build_home_prompt()
+        assert "near side" in prompt.lower() or "near" in prompt.lower()
+
+    def test_home_prompt_mentions_double_yellow(self, vision):
+        prompt = vision._build_home_prompt()
+        assert "double yellow" in prompt.lower()
+
+    def test_home_prompt_mentions_moving_traffic(self, vision):
+        prompt = vision._build_home_prompt()
+        assert "moving" in prompt.lower() or "traffic" in prompt.lower()
+
+    def test_home_prompt_mentions_vehicle_size(self, vision):
+        prompt = vision._build_home_prompt()
+        assert "mid-size suv" in prompt.lower() or "4.5" in prompt
+
+    def test_home_prompt_mentions_min_space(self, vision):
+        prompt = vision._build_home_prompt()
+        assert "5.0" in prompt or "5 metres" in prompt.lower()
+
     def test_scan_prompt_includes_position(self, vision):
         prompt = vision._build_scan_prompt("far left")
         assert "far left" in prompt
         assert "FREE" in prompt
+
+    def test_scan_prompt_mentions_near_side(self, vision):
+        prompt = vision._build_scan_prompt("left")
+        assert "near side" in prompt.lower() or "near" in prompt.lower()
+
+    def test_scan_prompt_mentions_double_yellow(self, vision):
+        prompt = vision._build_scan_prompt("left")
+        assert "double yellow" in prompt.lower()
+
+    def test_scan_prompt_mentions_moving_vehicles(self, vision):
+        prompt = vision._build_scan_prompt("centre")
+        assert "moving" in prompt.lower() or "stationary" in prompt.lower()
+
+    def test_scan_prompt_mentions_vehicle_size(self, vision):
+        prompt = vision._build_scan_prompt("right")
+        assert "mid-size suv" in prompt.lower() or "4.5" in prompt
 
 
 class TestCheckHomeSpot:
