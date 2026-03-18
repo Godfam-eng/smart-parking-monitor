@@ -314,12 +314,45 @@ Quick version:
 
 ---
 
+## Step 13a: Access the PWA Dashboard
+
+The API server also serves a mobile-first Progressive Web App dashboard at `/dashboard`.
+
+**Open in Safari (or any browser):**
+```
+http://100.x.y.z:8080/dashboard
+```
+
+Replace `100.x.y.z` with your Pi's Tailscale IP address.
+
+**Install to iPhone home screen (recommended):**
+1. Open the dashboard URL in **Safari**
+2. Tap the **Share** button (box with arrow) at the bottom of the screen
+3. Scroll down and tap **"Add to Home Screen"**
+4. Name it "Parking" and tap **Add**
+
+The dashboard will now appear as a full-screen app on your home screen — no browser chrome.
+
+**Dashboard features:**
+- 🏠 **Home tab** — Live parking status with auto-refresh countdown
+- 📊 **Analytics tab** — 24-hour heatmap showing free/occupied patterns
+- 🔍 **Scan tab** — Trigger a full street scan and see results
+- 📷 **Camera tab** — Live snapshot with auto-refresh toggle
+- ⚙️ **Settings tab** — View configuration, system health, and set API key
+
+**If API_KEY is set:**  
+The dashboard will return a 401 on protected endpoints and prompt you to enter the key. It stores the key in `sessionStorage` (cleared when you close the browser tab).
+
+---
+
 ## Step 14: Final Verification Checklist
 
 - [ ] `sudo systemctl status parking-monitor` shows `active (running)`
 - [ ] Telegram bot responds to `/status`
 - [ ] Telegram bot responds to `/scan`
 - [ ] `http://100.x.y.z:8080/` returns `{"status": "ok"}`
+- [ ] `http://100.x.y.z:8080/dashboard` opens the PWA dashboard
+- [ ] Dashboard installed to iPhone home screen
 - [ ] Siri reports parking status when asked
 - [ ] Pushover notification arrives when space becomes free/occupied
 - [ ] Service auto-restarts after `sudo reboot`
