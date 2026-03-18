@@ -111,38 +111,106 @@ class ParkingVision:
     def _build_home_prompt(self) -> str:
         """Build the prompt for checking the home parking spot."""
         zone = self.config
+        parking_side = zone.STREET_PARKING_SIDE  # "near" or "far"
+        opposite_restriction = zone.OPPOSITE_SIDE_RESTRICTION
+
+        if parking_side == "far":
+            near_side_desc = (
+                "parking is ONLY on the FAR side of the road "
+                "(opposite to the camera, closest to the top of the image)"
+            )
+            near_side_focus = "FAR side of the road (opposite to the camera)"
+        else:
+            near_side_desc = (
+                "parking is ONLY on the NEAR side "
+                "(the same side as the camera/house, closest to the bottom of the image)"
+            )
+            near_side_focus = "NEAR side of the road (camera's side)"
+
+        restriction_map = {
+            "double_yellow": "DOUBLE YELLOW LINES — no parking is allowed there",
+            "single_yellow": "SINGLE YELLOW LINES — parking restrictions apply at certain times",
+            "no_parking": "NO PARKING signs — no parking is allowed there",
+            "none": "no parking restrictions on that side",
+        }
+        opposite_desc = restriction_map.get(
+            opposite_restriction,
+            f"{opposite_restriction.replace('_', ' ').upper()} — check local restrictions",
+        )
+
         return (
-            "You are analysing a photo taken through a window of a UK terraced street.\n\n"
+            "You are analysing a photo taken through a house window overlooking a UK terraced street.\n\n"
+            "STREET LAYOUT:\n"
+            f"- This is a one-sided parking street; {near_side_desc}.\n"
+            f"- The OPPOSITE side of the road has {opposite_desc}. Completely ignore any vehicles on that side.\n"
+            "- The road surface runs through the middle of the image.\n\n"
             "IMPORTANT — IGNORE:\n"
-            "- Window glass reflections, glare, or any reflections in the glass\n"
+            "- Window glass reflections, glare, condensation, or smears\n"
             "- Interior objects reflected in the window\n"
-            "- Streaks, smears, or condensation on the glass\n\n"
+            "- Foreground objects: stone wall, wheelie bins, garden — these are below/in front of the road\n"
+            "- Window frame edges (visible at extreme pan angles)\n"
+            "- MOVING TRAFFIC: any vehicles driving along the road (not parked). "
+            "Only stationary vehicles parked against the kerb on the near side matter.\n"
+            "- Vehicles on the OPPOSITE side of the road (irrelevant — see restriction above)\n\n"
             "FOCUS ON:\n"
-            "- The road surface and kerbside parking area visible through the glass\n"
-            f"- The parking zone: top {zone.PARKING_ZONE_TOP}% to {zone.PARKING_ZONE_BOTTOM}% "
+            f"- The kerbside parking area on the {near_side_focus}\n"
+            f"- The parking zone: approximately top {zone.PARKING_ZONE_TOP}% to {zone.PARKING_ZONE_BOTTOM}% "
             f"of the image height, left {zone.PARKING_ZONE_LEFT}% to {zone.PARKING_ZONE_RIGHT}% "
             "of the image width\n"
-            "- Whether a vehicle (car, van, lorry, motorcycle) is parked there\n\n"
-            "Determine if the parking space directly in front of the house is FREE or OCCUPIED.\n\n"
+            "- Whether a vehicle (car, van, SUV, lorry, motorcycle) is PARKED and STATIONARY "
+            "against the kerb on the near side\n\n"
+            "VEHICLE SIZE CONTEXT:\n"
+            f"- The owner drives a mid-size SUV (~{zone.VEHICLE_LENGTH_METRES}m long). "
+            "A space is 'FREE' even if it's a tight fit, as long as the vehicle could physically fit.\n"
+            f"- Gaps of ~{zone.MIN_SPACE_METRES} metres or more between parked cars count as FREE.\n\n"
+            "Determine if the parking space directly in front of the house (near side) is FREE or OCCUPIED.\n\n"
             "Respond with ONLY valid JSON (no markdown, no explanation):\n"
             '{"status": "FREE" or "OCCUPIED", "confidence": "high" or "medium" or "low", '
-            '"description": "one sentence describing what you see"}'
+            '"description": "one sentence describing what you see on the near side kerb"}'
         )
 
     def _build_scan_prompt(self, position_name: str) -> str:
         """Build the prompt for a street scan position."""
+        cfg = self.config
+        parking_side = cfg.STREET_PARKING_SIDE  # "near" or "far"
+        opposite_restriction = cfg.OPPOSITE_SIDE_RESTRICTION
+
+        if parking_side == "far":
+            near_side_desc = "FAR side of the road (opposite to the camera, closest to top of image)"
+        else:
+            near_side_desc = "NEAR side of the road (camera's side, closest to bottom of image)"
+
+        restriction_map = {
+            "double_yellow": "DOUBLE YELLOW LINES",
+            "single_yellow": "SINGLE YELLOW LINES",
+            "no_parking": "NO PARKING signs",
+            "none": "no restriction",
+        }
+        opposite_desc = restriction_map.get(
+            opposite_restriction,
+            opposite_restriction.replace("_", " ").upper(),
+        )
+
         return (
             f"You are analysing a photo of the {position_name} section of a UK terraced street, "
-            "taken through a window.\n\n"
+            "taken through a house window.\n\n"
+            "STREET LAYOUT:\n"
+            f"- Parking is ONLY allowed on the {near_side_desc}.\n"
+            f"- The OPPOSITE side has {opposite_desc} — completely ignore it.\n"
+            "- The road runs through the middle — ignore moving traffic.\n\n"
             "IMPORTANT — IGNORE:\n"
-            "- Window glass reflections, glare, or any reflections in the glass\n"
-            "- Interior objects reflected in the window\n"
-            "- Streaks, smears, or condensation on the glass\n\n"
+            "- Window glass reflections, glare, condensation\n"
+            "- Interior reflections and foreground objects (stone wall, bins, garden)\n"
+            "- Window frame edges at extreme angles\n"
+            "- MOVING VEHICLES on the road — only stationary parked cars on the near kerb matter\n"
+            f"- Any vehicles on the opposite side of the road ({opposite_desc})\n\n"
             "FOCUS ON:\n"
-            "- The road surface and kerbside areas visible through the glass\n"
-            "- Whether there are any FREE (empty) parking spaces visible\n"
-            "- How many cars are present versus how many spaces appear free\n\n"
-            "Determine if there is any FREE parking space visible in this part of the street.\n\n"
+            f"- The kerbside parking spaces on the {near_side_desc} only\n"
+            f"- Whether there are any gaps between parked cars where a mid-size SUV "
+            f"(~{cfg.VEHICLE_LENGTH_METRES}m) could fit\n"
+            f"- A gap of ~{cfg.MIN_SPACE_METRES} metres or more counts as a free space\n"
+            "- Count the approximate number of free spaces visible\n\n"
+            "Determine if there is any FREE parking space visible on the near side of the street.\n\n"
             "Respond with ONLY valid JSON (no markdown, no explanation):\n"
             '{"status": "FREE" or "OCCUPIED", "confidence": "high" or "medium" or "low", '
             '"description": "one sentence describing what you see, including approximate number of free spaces if any"}'

@@ -29,7 +29,7 @@ class Config:
 
     # --- Anthropic Claude API ---
     ANTHROPIC_API_KEY: str = ""
-    CLAUDE_MODEL: str = "claude-sonnet-4-20250514"
+    CLAUDE_MODEL: str = "claude-sonnet-4-5"
     CLAUDE_MAX_TOKENS: int = 1024
 
     # --- Telegram Bot ---
@@ -70,6 +70,12 @@ class Config:
     # --- Geofencing (optional) ---
     HOME_LAT: float = 0.0
     HOME_LON: float = 0.0
+
+    # --- Street Context ---
+    STREET_PARKING_SIDE: str = "near"          # "near" = camera side, "far" = opposite side
+    OPPOSITE_SIDE_RESTRICTION: str = "double_yellow"  # "none", "single_yellow", "double_yellow", "no_parking"
+    VEHICLE_LENGTH_METRES: float = 4.5         # Owner's vehicle length for space-fit assessment
+    MIN_SPACE_METRES: float = 5.0              # Minimum gap (metres) to count as a free space
 
 
 def _parse_scan_positions(raw: str) -> List[int]:
@@ -113,7 +119,7 @@ def load_config() -> Config:
         TAPO_RTSP_PORT=_safe_int("TAPO_RTSP_PORT", os.getenv("TAPO_RTSP_PORT", "554"), 554),
         TAPO_STREAM_PATH=os.getenv("TAPO_STREAM_PATH", "stream1"),
         ANTHROPIC_API_KEY=os.getenv("ANTHROPIC_API_KEY", ""),
-        CLAUDE_MODEL=os.getenv("CLAUDE_MODEL", "claude-sonnet-4-20250514"),
+        CLAUDE_MODEL=os.getenv("CLAUDE_MODEL", "claude-sonnet-4-5"),
         CLAUDE_MAX_TOKENS=_safe_int("CLAUDE_MAX_TOKENS", os.getenv("CLAUDE_MAX_TOKENS", "1024"), 1024),
         TELEGRAM_BOT_TOKEN=os.getenv("TELEGRAM_BOT_TOKEN", ""),
         TELEGRAM_CHAT_ID=os.getenv("TELEGRAM_CHAT_ID", ""),
@@ -136,6 +142,10 @@ def load_config() -> Config:
         DB_PATH=os.getenv("DB_PATH", "parking_history.db"),
         HOME_LAT=_safe_float("HOME_LAT", os.getenv("HOME_LAT", "0.0"), 0.0),
         HOME_LON=_safe_float("HOME_LON", os.getenv("HOME_LON", "0.0"), 0.0),
+        STREET_PARKING_SIDE=os.getenv("STREET_PARKING_SIDE", "near"),
+        OPPOSITE_SIDE_RESTRICTION=os.getenv("OPPOSITE_SIDE_RESTRICTION", "double_yellow"),
+        VEHICLE_LENGTH_METRES=_safe_float("VEHICLE_LENGTH_METRES", os.getenv("VEHICLE_LENGTH_METRES", "4.5"), 4.5),
+        MIN_SPACE_METRES=_safe_float("MIN_SPACE_METRES", os.getenv("MIN_SPACE_METRES", "5.0"), 5.0),
     )
 
 
