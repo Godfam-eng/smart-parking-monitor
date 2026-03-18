@@ -152,7 +152,7 @@ def main() -> None:
 
     # 1. Configuration
     config = load_config()
-    if not validate(config):
+    if not validate(config, require_telegram=not args.skip_bot):
         logger.error("Configuration invalid — exiting")
         sys.exit(1)
 
@@ -169,7 +169,8 @@ def main() -> None:
         test_frame = camera.grab_frame()
         logger.info("Camera self-test passed (%d bytes captured)", len(test_frame))
     except Exception as exc:
-        logger.warning("Camera self-test failed: %s — continuing anyway", exc)
+        logger.error("Camera self-test failed: %s — exiting (systemd will retry)", exc)
+        sys.exit(1)
 
     # 4. Start Telegram bot in a daemon thread
     if not args.skip_bot and config.TELEGRAM_BOT_TOKEN:
