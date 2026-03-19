@@ -120,6 +120,12 @@ class Config:
     LEAVING_DEFAULT_MINUTES: int = 30     # Default ETA when /leaving is used without argument
     LEAVING_UPDATE_INTERVAL: int = 600    # Interval (seconds) for proactive /leaving updates
 
+    # --- Background Scan Cache ---
+    # Run a full scan every N background checks and cache the result for instant
+    # Siri /status responses that include street-wide availability.
+    BACKGROUND_SCAN_EVERY: int = 3        # Full scan every N monitoring loop iterations (0 = disabled)
+    SCAN_CACHE_MAX_AGE: int = 600         # Maximum cache age in seconds before treating as stale
+
 
 def _parse_scan_positions(raw: str) -> List[int]:
     """Parse a comma-separated string of pan angles into a list of ints."""
@@ -212,6 +218,8 @@ def load_config() -> Config:
         LEAVING_GRACE_MINUTES=_safe_int("LEAVING_GRACE_MINUTES", os.getenv("LEAVING_GRACE_MINUTES", "30"), 30),
         LEAVING_DEFAULT_MINUTES=_safe_int("LEAVING_DEFAULT_MINUTES", os.getenv("LEAVING_DEFAULT_MINUTES", "30"), 30),
         LEAVING_UPDATE_INTERVAL=_safe_int("LEAVING_UPDATE_INTERVAL", os.getenv("LEAVING_UPDATE_INTERVAL", "600"), 600),
+        BACKGROUND_SCAN_EVERY=_safe_int("BACKGROUND_SCAN_EVERY", os.getenv("BACKGROUND_SCAN_EVERY", "3"), 3),
+        SCAN_CACHE_MAX_AGE=_safe_int("SCAN_CACHE_MAX_AGE", os.getenv("SCAN_CACHE_MAX_AGE", "600"), 600),
     )
 
 
