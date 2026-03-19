@@ -20,6 +20,11 @@ Create accounts and gather credentials **before** you sit down at the Pi:
 
   > ⚠️ These credentials are **NOT** your TP-Link cloud login.  The camera account is separate.
 
+- [ ] **Tapo C225 — TP-Link Cloud Account** (needed for pan/tilt control):
+  - Note your **TP-Link cloud email and password** (the credentials you use to log in to the Tapo app).
+  - Many C225 firmware versions require cloud credentials for the pytapo local API (pan/tilt), while RTSP streaming uses the Camera Account credentials above.
+  - You will set these as `TAPO_CLOUD_USER` / `TAPO_CLOUD_PASSWORD` in `.env`.
+
 ---
 
 ## Step 1: Flash the SD Card
@@ -102,6 +107,8 @@ Fill in every value.  Key fields:
 | `TAPO_IP` | Router DHCP table or Tapo app → Device Info |
 | `TAPO_USER` | Camera Account username you created in Pre-Arrival step |
 | `TAPO_PASSWORD` | Camera Account password you created in Pre-Arrival step |
+| `TAPO_CLOUD_USER` | Your TP-Link cloud account email (Tapo app login) — used for pan/tilt API |
+| `TAPO_CLOUD_PASSWORD` | Your TP-Link cloud account password — used for pan/tilt API |
 | `ANTHROPIC_API_KEY` | https://console.anthropic.com |
 | `TELEGRAM_BOT_TOKEN` | From BotFather |
 | `TELEGRAM_CHAT_ID` | Send `/start` to your bot, then visit:<br>`https://api.telegram.org/bot<TOKEN>/getUpdates` |
@@ -414,8 +421,10 @@ print(result)
 
 ### "Cannot connect to Tapo camera" / pytapo authentication error
 
-1. Double-check you are using **Camera Account** credentials, not your TP-Link cloud email/password
-2. On some firmware versions pytapo needs the TP-Link cloud email — try that as a fallback
+1. The Tapo C225 uses **two separate credential systems**:
+   - **RTSP streaming** → Camera Account credentials (`TAPO_USER` / `TAPO_PASSWORD`)
+   - **pytapo API (pan/tilt)** → TP-Link cloud account credentials (`TAPO_CLOUD_USER` / `TAPO_CLOUD_PASSWORD`)
+2. Set `TAPO_CLOUD_USER` and `TAPO_CLOUD_PASSWORD` in `.env` to your TP-Link cloud account email and password (the same credentials you use to log in to the Tapo app).
 3. Check the camera is on the same network as the Pi: `ping <TAPO_IP>`
 4. Try reinstalling pytapo: `pip install --upgrade pytapo`
 

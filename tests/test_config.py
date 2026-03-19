@@ -179,6 +179,54 @@ class TestValidation:
         assert validate(cfg, require_telegram=False, require_anthropic=True) is False
 
 
+class TestCloudCredentialsConfig:
+    def test_cloud_credentials_default_to_empty(self, monkeypatch):
+        """TAPO_CLOUD_USER and TAPO_CLOUD_PASSWORD default to empty strings."""
+        monkeypatch.delenv("TAPO_CLOUD_USER", raising=False)
+        monkeypatch.delenv("TAPO_CLOUD_PASSWORD", raising=False)
+        cfg = load_config()
+        assert cfg.TAPO_CLOUD_USER == ""
+        assert cfg.TAPO_CLOUD_PASSWORD == ""
+
+    def test_cloud_user_from_env(self, monkeypatch):
+        monkeypatch.setenv("TAPO_CLOUD_USER", "cloud@example.com")
+        cfg = load_config()
+        assert cfg.TAPO_CLOUD_USER == "cloud@example.com"
+
+    def test_cloud_password_from_env(self, monkeypatch):
+        monkeypatch.setenv("TAPO_CLOUD_PASSWORD", "cloud_secret")
+        cfg = load_config()
+        assert cfg.TAPO_CLOUD_PASSWORD == "cloud_secret"
+
+    def test_validate_does_not_require_cloud_credentials(self):
+        """TAPO_CLOUD_USER / TAPO_CLOUD_PASSWORD are optional — validation must pass without them."""
+        cfg = Config(
+            TAPO_IP="192.168.1.1",
+            TAPO_USER="admin",
+            TAPO_PASSWORD="password",
+            ANTHROPIC_API_KEY="sk-ant-key",
+            TELEGRAM_BOT_TOKEN="1234:ABC",
+            TELEGRAM_CHAT_ID="987654",
+            TAPO_CLOUD_USER="",
+            TAPO_CLOUD_PASSWORD="",
+        )
+        assert validate(cfg) is True
+
+    def test_validate_passes_with_cloud_credentials(self):
+        """Validation must also pass when cloud credentials are supplied."""
+        cfg = Config(
+            TAPO_IP="192.168.1.1",
+            TAPO_USER="cam_user",
+            TAPO_PASSWORD="cam_pass",
+            ANTHROPIC_API_KEY="sk-ant-key",
+            TELEGRAM_BOT_TOKEN="1234:ABC",
+            TELEGRAM_CHAT_ID="987654",
+            TAPO_CLOUD_USER="cloud@example.com",
+            TAPO_CLOUD_PASSWORD="cloud_secret",
+        )
+        assert validate(cfg) is True
+
+
 class TestCalibrationConfig:
     def test_calibration_defaults(self, monkeypatch):
         for key in ("AUTO_CALIBRATE", "CALIBRATION_INTERVAL_DAYS", "CALIBRATION_MIN_USEFULNESS", "CALIBRATION_ANGLES"):
