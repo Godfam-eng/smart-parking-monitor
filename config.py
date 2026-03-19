@@ -32,6 +32,14 @@ class Config:
     # If left blank, TAPO_USER / TAPO_PASSWORD are used for both.
     TAPO_CLOUD_USER: str = ""
     TAPO_CLOUD_PASSWORD: str = ""
+    # Optional: pytapo API credentials (Third-Party Compatibility mode or cloud).
+    # Takes priority over TAPO_CLOUD_USER / TAPO_CLOUD_PASSWORD.
+    # Scenario A — Third-Party Compatibility ON: set TAPO_API_USER=admin,
+    #   TAPO_API_PASSWORD=<Camera Account password>.
+    # Scenario B — Third-Party Compatibility OFF: set to TP-Link cloud email/password.
+    # If left blank, falls back to TAPO_CLOUD_USER / TAPO_CLOUD_PASSWORD, then TAPO_USER / TAPO_PASSWORD.
+    TAPO_API_USER: str = ""
+    TAPO_API_PASSWORD: str = ""
 
     # --- Anthropic Claude API ---
     ANTHROPIC_API_KEY: str = ""
@@ -134,6 +142,8 @@ def load_config() -> Config:
         TAPO_STREAM_PATH=os.getenv("TAPO_STREAM_PATH", "stream1"),
         TAPO_CLOUD_USER=os.getenv("TAPO_CLOUD_USER", ""),
         TAPO_CLOUD_PASSWORD=os.getenv("TAPO_CLOUD_PASSWORD", ""),
+        TAPO_API_USER=os.getenv("TAPO_API_USER", ""),
+        TAPO_API_PASSWORD=os.getenv("TAPO_API_PASSWORD", ""),
         ANTHROPIC_API_KEY=os.getenv("ANTHROPIC_API_KEY", ""),
         CLAUDE_MODEL=os.getenv("CLAUDE_MODEL", "claude-sonnet-4-5"),
         CLAUDE_MAX_TOKENS=_safe_int("CLAUDE_MAX_TOKENS", os.getenv("CLAUDE_MAX_TOKENS", "1024"), 1024),
@@ -257,16 +267,22 @@ def validate(config: Config, *, require_telegram: bool = True, require_anthropic
     if not config.API_KEY:
         logger.warning("API_KEY not set — HTTP API is unauthenticated (set API_KEY in .env to enable)")
 
-    if not config.TAPO_CLOUD_USER:
+    if not config.TAPO_API_USER and not config.TAPO_CLOUD_USER:
         logger.warning(
-            "TAPO_CLOUD_USER is not set — using TAPO_USER for pytapo API. "
-            "If you get 'Invalid authentication data', set TAPO_CLOUD_USER / TAPO_CLOUD_PASSWORD "
-            "to your TP-Link cloud account credentials."
+            "TAPO_API_USER is not set — using TAPO_USER for pytapo API. "
+            "If you get 'Invalid authentication data', enable Third-Party Compatibility "
+            "in the Tapo app and set TAPO_API_USER=admin / TAPO_API_PASSWORD=<Camera Account password>, "
+            "or set TAPO_API_USER / TAPO_API_PASSWORD to your TP-Link cloud credentials."
         )
-    elif not config.TAPO_CLOUD_PASSWORD:
+    elif config.TAPO_API_USER and not config.TAPO_API_PASSWORD:
+        logger.warning(
+            "TAPO_API_USER is set but TAPO_API_PASSWORD is empty — "
+            "password will fall back to TAPO_CLOUD_PASSWORD or TAPO_PASSWORD."
+        )
+    elif not config.TAPO_API_USER and config.TAPO_CLOUD_USER and not config.TAPO_CLOUD_PASSWORD:
         logger.warning(
             "TAPO_CLOUD_USER is set but TAPO_CLOUD_PASSWORD is empty — "
-            "falling back to camera account (TAPO_USER) credentials for pytapo API."
+            "password will fall back to TAPO_PASSWORD."
         )
 
     logger.info("Configuration validated successfully.")

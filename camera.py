@@ -87,22 +87,42 @@ class TapoCamera:
         """
         with self._lock:
             try:
-                use_cloud = bool(self.config.TAPO_CLOUD_USER and self.config.TAPO_CLOUD_PASSWORD)
-                if self.config.TAPO_CLOUD_USER and not self.config.TAPO_CLOUD_PASSWORD:
+                api_user = (
+                    self.config.TAPO_API_USER
+                    or self.config.TAPO_CLOUD_USER
+                    or self.config.TAPO_USER
+                )
+                api_password = (
+                    self.config.TAPO_API_PASSWORD
+                    or self.config.TAPO_CLOUD_PASSWORD
+                    or self.config.TAPO_PASSWORD
+                )
+                # Warn if TAPO_API_USER is set without a matching password
+                if self.config.TAPO_API_USER and not self.config.TAPO_API_PASSWORD:
+                    logger.warning(
+                        "TAPO_API_USER is set but TAPO_API_PASSWORD is empty — "
+                        "password will fall back to TAPO_CLOUD_PASSWORD or TAPO_PASSWORD"
+                    )
+                elif self.config.TAPO_CLOUD_USER and not self.config.TAPO_CLOUD_PASSWORD:
                     logger.warning(
                         "TAPO_CLOUD_USER is set but TAPO_CLOUD_PASSWORD is empty — "
-                        "falling back to camera account (TAPO_USER) credentials for pytapo API"
+                        "password will fall back to TAPO_PASSWORD"
                     )
-                cloud_user = self.config.TAPO_CLOUD_USER if use_cloud else self.config.TAPO_USER
-                cloud_password = self.config.TAPO_CLOUD_PASSWORD if use_cloud else self.config.TAPO_PASSWORD
-                logger.info(
-                    "Connecting to pytapo API using %s credentials",
-                    "cloud (TAPO_CLOUD_USER)" if use_cloud else "camera account (TAPO_USER)",
-                )
+
+                if self.config.TAPO_API_USER or self.config.TAPO_CLOUD_USER:
+                    masked = (api_user[0] + "***") if api_user else "***"
+                    logger.info(
+                        "Connecting pytapo API with dedicated API/cloud credentials (user: %s)",
+                        masked,
+                    )
+                else:
+                    logger.info(
+                        "Connecting pytapo API with camera account credentials (TAPO_USER)"
+                    )
                 self.tapo = Tapo(
                     host=self.config.TAPO_IP,
-                    user=cloud_user,
-                    password=cloud_password,
+                    user=api_user,
+                    password=api_password,
                 )
                 logger.info(
                     "Connected to Tapo camera at %s", self.config.TAPO_IP
