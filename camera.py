@@ -31,11 +31,14 @@ _PAN_MAX: int = 180
 _TILT_MIN: int = -20
 _TILT_MAX: int = 20
 
-# A large negative sweep guaranteed to reach the physical left end-stop
-# regardless of current position, used during calibration.
-_CALIBRATION_PAN_SWEEP: int = -360
-# Seconds to wait for the camera to reach and settle at the end-stop.
-_CALIBRATION_SETTLE_TIME: float = 6.0
+# Step size (degrees) used by the incremental calibration sweep.
+_CALIBRATION_PAN_STEP: int = -90
+# Maximum number of steps; 5 × 90° = 450°, more than the full 360° range.
+_CALIBRATION_MAX_STEPS: int = 5
+# Seconds to wait between each incremental calibration step.
+_CALIBRATION_STEP_SETTLE: float = 1.5
+# Seconds to wait after the final step for the camera to fully settle.
+_CALIBRATION_SETTLE_TIME: float = 3.0
 
 # Position labels — non-overlapping integer ranges covering -90 to +90.
 # Each integer in that range falls into exactly one bucket.
@@ -54,6 +57,17 @@ def _angle_to_position_name(angle: int) -> str:
         if low <= angle <= high:
             return label
     return "far right" if angle > 90 else "far left"
+
+
+def _is_motor_locked_rotor(exc: Exception) -> bool:
+    """Return True if *exc* indicates a MOTOR_LOCKED_ROTOR hardware error.
+
+    Some firmware versions (especially with Third-Party Compatibility enabled)
+    raise this error (-64304) when the camera reaches its physical end-stop
+    instead of silently clamping the movement.
+    """
+    msg = str(exc)
+    return "MOTOR_LOCKED_ROTOR" in msg or "-64304" in msg
 
 
 class TapoCamera:
@@ -143,10 +157,16 @@ class TapoCamera:
         Drive the camera to its physical left end-stop to establish a known
         absolute position for delta-based movement.
 
-        Sends a large negative pan command (-360°) that is guaranteed to
-        reach the hardware limit regardless of current position, then sets
-        _current_pan to _PAN_MIN (-180°) so all subsequent move_to_angle()
+        Uses incremental steps of _CALIBRATION_PAN_STEP degrees until the
+        camera reaches its physical limit (signalled by MOTOR_LOCKED_ROTOR on
+        newer firmware) or _CALIBRATION_MAX_STEPS steps have been taken.
+        Sets _current_pan to _PAN_MIN (-180°) so all subsequent move_to_angle()
         calls can compute accurate deltas.
+
+        MOTOR_LOCKED_ROTOR (-64304) is treated as a successful end-stop
+        detection rather than an error — some firmware versions (especially
+        with Third-Party Compatibility enabled) raise this instead of silently
+        clamping the movement.
 
         Raises:
             RuntimeError: if the camera is not connected.
@@ -156,19 +176,35 @@ class TapoCamera:
                 raise RuntimeError("Camera not connected. Call connect() first.")
 
             logger.info("Calibrating camera position: driving to left end-stop…")
-            try:
-                # A large negative sweep always reaches the physical left end-stop
-                self.tapo.moveMotor(_CALIBRATION_PAN_SWEEP, 0)
-                # Wait for the camera to hit the stop and fully settle
-                time.sleep(_CALIBRATION_SETTLE_TIME)
-                self._current_pan = _PAN_MIN
-                self._current_tilt = 0
+            for step in range(_CALIBRATION_MAX_STEPS):
+                try:
+                    self.tapo.moveMotor(_CALIBRATION_PAN_STEP, 0)
+                    time.sleep(_CALIBRATION_STEP_SETTLE)
+                except Exception as exc:
+                    if _is_motor_locked_rotor(exc):
+                        logger.info(
+                            "Camera reached physical end-stop (MOTOR_LOCKED_ROTOR) "
+                            "at step %d — calibration complete",
+                            step + 1,
+                        )
+                        break
+                    else:
+                        logger.error("Camera position calibration failed: %s", exc)
+                        raise
+            else:
                 logger.info(
-                    "Camera calibrated: position reset to pan=%d (left end-stop)", _PAN_MIN
+                    "Camera completed full calibration sweep (%d steps) without "
+                    "hitting end-stop",
+                    _CALIBRATION_MAX_STEPS,
                 )
-            except Exception as exc:
-                logger.error("Camera position calibration failed: %s", exc)
-                raise
+
+            # Final settle before declaring position known
+            time.sleep(_CALIBRATION_SETTLE_TIME)
+            self._current_pan = _PAN_MIN
+            self._current_tilt = 0
+            logger.info(
+                "Camera calibrated: position reset to pan=%d (left end-stop)", _PAN_MIN
+            )
 
     # ------------------------------------------------------------------
     # RTSP helpers
@@ -271,14 +307,25 @@ class TapoCamera:
                     pan_target, tilt_target, pan_delta, tilt_delta,
                 )
                 self.tapo.moveMotor(pan_delta, tilt_delta)
-                # Update tracked position BEFORE sleep so it's always accurate
-                self._current_pan = pan_target
-                self._current_tilt = tilt_target
-                logger.debug("Waiting %.1f s for camera to stabilise", self.config.SCAN_SETTLE_TIME)
-                time.sleep(self.config.SCAN_SETTLE_TIME)
             except Exception as exc:
-                logger.error("Failed to move camera to pan=%d tilt=%d: %s", pan_target, tilt_target, exc)
-                raise
+                if _is_motor_locked_rotor(exc):
+                    logger.warning(
+                        "Motor reached physical limit moving to pan=%d, tilt=%d — "
+                        "position may be approximate",
+                        pan_target, tilt_target,
+                    )
+                else:
+                    logger.error(
+                        "Failed to move camera to pan=%d tilt=%d: %s",
+                        pan_target, tilt_target, exc,
+                    )
+                    raise
+
+            # Update tracked position BEFORE sleep so it's always accurate
+            self._current_pan = pan_target
+            self._current_tilt = tilt_target
+            logger.debug("Waiting %.1f s for camera to stabilise", self.config.SCAN_SETTLE_TIME)
+            time.sleep(self.config.SCAN_SETTLE_TIME)
 
     def move_to_home(self) -> None:
         """Return camera to the configured home position."""

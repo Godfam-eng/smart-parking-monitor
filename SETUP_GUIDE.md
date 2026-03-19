@@ -507,6 +507,24 @@ sudo systemctl start parking-monitor
 2. Send `/start` to the bot from the chat whose ID is in `TELEGRAM_CHAT_ID`
 3. Check for errors: `sudo journalctl -u parking-monitor -n 50`
 
+### "MOTOR_LOCKED_ROTOR" / error code -64304
+
+This error means the camera tried to move beyond its physical pan/tilt limits.
+It was previously triggered during automatic calibration on some C225 firmware
+versions with Third-Party Compatibility enabled.
+
+**This is fixed in the latest code.** Update to the latest version:
+
+```bash
+cd ~/smart-parking-monitor
+git pull
+source venv/bin/activate
+pip install -r requirements.txt
+sudo systemctl restart parking-monitor
+```
+
+If the error persists after updating, check that nothing physically obstructs the camera's rotation.
+
 ### Pushover notifications not arriving
 
 1. Verify `PUSHOVER_USER_KEY` and `PUSHOVER_API_TOKEN` in `.env`
