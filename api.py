@@ -45,6 +45,7 @@ async def auth_middleware(request: web.Request, handler):
 
     If API_KEY is configured, every request must include either:
       - Header:      X-API-Key: <key>
+      - Query param: ?key=<key>  (GET requests only — for Siri Shortcuts which can't set headers)
     Requests to / and /health are always allowed (unauthenticated health-check).
     If API_KEY is empty the middleware is a no-op (backward-compatible).
     """
@@ -52,6 +53,9 @@ async def auth_middleware(request: web.Request, handler):
     exempt = {"/", "/health", "/dashboard", "/manifest.json", "/sw.js"}
     if api_key and request.path not in exempt and not request.path.startswith("/static/"):
         provided = request.headers.get("X-API-Key", "")
+        # Also accept ?key= query parameter for GET requests (Siri Shortcuts can't set headers)
+        if not provided and request.method == "GET":
+            provided = request.rel_url.query.get("key", "")
         if provided != api_key:
             return web.json_response({"error": "Unauthorized"}, status=401)
     return await handler(request)
@@ -221,6 +225,143 @@ async def handle_scan_json(request: web.Request) -> web.Response:
         return web.json_response({"error": str(exc)}, status=500)
 
 
+# ------------------------------------------------------------------
+# Voice narrative helpers
+# ------------------------------------------------------------------
+
+_POSITION_PHRASES = {
+    "center":    "your spot directly outside",
+    "left":      "one or two cars to the left",
+    "far left":  "further along on the left",
+    "right":     "one or two cars to the right",
+    "far right": "further along on the right",
+}
+
+_STATUS_PHRASES = {
+    "FREE":     "there's a space there",
+    "OCCUPIED": "that's taken",
+    "UNKNOWN":  "I can't quite tell",
+}
+
+# Narrative order: home first, then nearest-to-furthest on each side
+_POSITION_ORDER = ["center", "left", "far left", "right", "far right"]
+
+
+def _build_voice_narrative(home_result: dict, scan_results: list) -> str:
+    """Build a conversational spoken narrative from scan results.
+
+    Args:
+        home_result: Vision result dict for the home/center position.
+        scan_results: List of dicts with keys 'position_name', 'status', 'description'.
+
+    Returns:
+        A plain-text narrative string suitable for Siri to read aloud.
+    """
+    lines = ["Checking your street now."]
+
+    home_status = home_result.get("status", "UNKNOWN")
+    home_phrase = _POSITION_PHRASES.get("center", "your spot directly outside")
+
+    if home_status == "FREE":
+        lines.append(f"Your spot directly outside is free.")
+    elif home_status == "OCCUPIED":
+        lines.append(f"Your spot directly outside is taken.")
+    else:
+        lines.append(f"I can't quite tell about your spot directly outside.")
+
+    # Build a map of position_name → result for easy lookup
+    scan_map = {r["position_name"].lower(): r for r in scan_results}
+
+    # Walk positions in narrative order (skip 'center' — already handled above)
+    free_spaces = []
+    for pos_key in _POSITION_ORDER[1:]:
+        result = scan_map.get(pos_key)
+        if result is None:
+            continue
+        status = result.get("status", "UNKNOWN")
+        description = result.get("description", "")
+        phrase = _POSITION_PHRASES.get(pos_key, pos_key)
+        status_phrase = _STATUS_PHRASES.get(status, "I can't quite tell")
+
+        if status == "FREE":
+            line = f"Looking {phrase} — {status_phrase}."
+            if description:
+                line += f" {description}"
+            free_spaces.append((pos_key, phrase))
+        else:
+            line = f"Looking {phrase} — {status_phrase}."
+        lines.append(line)
+
+    # Summary
+    if home_status == "FREE":
+        lines.append("Your spot is right there. Head straight home.")
+    elif free_spaces:
+        nearest_phrase = free_spaces[0][1]
+        lines.append(f"Closest free space is {nearest_phrase}. I'd head there.")
+    else:
+        all_positions = [_POSITION_PHRASES.get(p, p) for p in _POSITION_ORDER[1:] if p in scan_map]
+        if all_positions:
+            pos_list = ", ".join(all_positions[:-1])
+            if len(all_positions) > 1:
+                pos_list += f", and {all_positions[-1]}"
+            else:
+                pos_list = all_positions[0]
+            lines.append(
+                f"I've looked {pos_list} — the whole street looks full right now. "
+                "Try again in a few minutes."
+            )
+        else:
+            lines.append("The whole street looks full right now. Try again in a few minutes.")
+
+    return " ".join(lines)
+
+
+async def handle_scan_voice(request: web.Request) -> web.Response:
+    """GET /scan/voice — Conversational plain-text scan result for Siri."""
+    try:
+        loop = asyncio.get_running_loop()
+
+        # Step 1: Check home spot first
+        image_bytes = await loop.run_in_executor(None, _camera.grab_frame)
+        home_result = await loop.run_in_executor(None, _vision.check_home_spot, image_bytes)
+
+        home_status = home_result.get("status", "UNKNOWN")
+        home_confidence = home_result.get("confidence", "low")
+
+        # Step 2: Short-circuit if home spot is free with sufficient confidence
+        if home_status == "FREE" and home_confidence in ("high", "medium"):
+            text = "Good news — your spot directly outside is free. Head straight home."
+            return web.Response(text=text, content_type="text/plain")
+
+        # Step 3: Full street scan
+        positions = await loop.run_in_executor(None, _camera.scan_street)
+        scan_results = []
+        for pos in positions:
+            result = await loop.run_in_executor(
+                None, _vision.check_scan_position, pos["image"], pos["position_name"]
+            )
+            scan_results.append(
+                {
+                    "position_name": pos["position_name"],
+                    "status": result.get("status", "UNKNOWN"),
+                    "confidence": result.get("confidence", "low"),
+                    "description": result.get("description", ""),
+                }
+            )
+
+        # Step 4: Build narrative
+        narrative = _build_voice_narrative(home_result, scan_results)
+        return web.Response(text=narrative, content_type="text/plain")
+
+    except Exception as exc:
+        logger.error("Error in /scan/voice handler: %s", exc)
+        return web.Response(
+            text=f"Sorry, I couldn't check the street right now: {exc}",
+            status=500,
+            content_type="text/plain",
+        )
+
+
 async def handle_snapshot(request: web.Request) -> web.Response:
     """GET /snapshot — Return current JPEG frame."""
     try:
@@ -266,11 +407,18 @@ async def handle_health(request: web.Request) -> web.Response:
 
     uptime = int(time.time() - _start_time) if _start_time else 0
 
+    watch = _state.get_watch_mode() if _state else None
+
     return web.json_response(
         {
             "camera": camera_ok,
             "database": db_ok,
             "uptime_seconds": uptime,
+            "watch_mode": {
+                "active": watch is not None,
+                "mode": watch["mode"] if watch else None,
+                "expires_at": watch["expires_at"] if watch else None,
+            },
         }
     )
 
@@ -406,6 +554,7 @@ def _build_app() -> web.Application:
     app.router.add_get("/status/live/json", handle_status_live_json)
     app.router.add_get("/scan", handle_scan_text)
     app.router.add_get("/scan/json", handle_scan_json)
+    app.router.add_get("/scan/voice", handle_scan_voice)
     app.router.add_get("/snapshot", handle_snapshot)
     app.router.add_get("/stats", handle_stats)
     app.router.add_get("/health", handle_health)

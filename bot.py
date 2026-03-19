@@ -8,6 +8,7 @@ with the parking system via Telegram. Compatible with python-telegram-bot v20+.
 import asyncio
 import functools
 import logging
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from telegram import Update
@@ -190,6 +191,9 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/stats — View parking statistics\n"
         "/calibrate — Run auto-calibration sweep\n"
         "/positions — Show current calibrated scan positions\n"
+        "/watch — Passive watchdog — alert when space appears (2hr timeout)\n"
+        "/leaving [minutes] — Commute mode — ETA-aware, check every 90s\n"
+        "/unwatch — Cancel watch/commute mode\n"
         "/help — Show this help message"
     )
     await update.message.reply_text(text, parse_mode="Markdown")
@@ -204,6 +208,11 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 @_authorised
 async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """/status — Grab frame and report parking status."""
+    # Show active watch mode at the top if relevant
+    watch = _state.get_watch_mode() if _state else None
+    if watch is not None:
+        mode_label = "👁 Watch mode active" if watch["mode"] == "watch" else "🚗 Commute mode active"
+        await update.message.reply_text(mode_label)
     await _send_status_reply(update)
 
 
@@ -291,6 +300,64 @@ async def cmd_positions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 
 # ------------------------------------------------------------------
+# Watch mode command handlers
+# ------------------------------------------------------------------
+
+@_authorised
+async def cmd_watch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/watch — Activate passive watchdog mode."""
+    timeout_hours = _config.WATCH_TIMEOUT_HOURS
+    expires_at = (datetime.now(timezone.utc) + timedelta(hours=timeout_hours)).isoformat()
+    chat_id = str(update.effective_chat.id)
+    _state.set_watch_mode("watch", 0, expires_at, chat_id)
+    await update.message.reply_text(
+        f"👁 Watch mode activated!\n\n"
+        f"I'll check every {_config.WATCH_CHECK_INTERVAL} seconds and alert you the moment a space appears.\n"
+        f"Auto-cancels in {timeout_hours} hour{'s' if timeout_hours != 1 else ''}.\n\n"
+        f"Send /unwatch to cancel."
+    )
+
+
+@_authorised
+async def cmd_leaving(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/leaving [minutes] — Activate commute mode with ETA."""
+    eta_minutes = _config.LEAVING_DEFAULT_MINUTES
+    if context.args:
+        try:
+            parsed = int(context.args[0])
+            if parsed > 0:
+                eta_minutes = parsed
+        except ValueError:
+            pass
+
+    grace = _config.LEAVING_GRACE_MINUTES
+    expires_at = (datetime.now(timezone.utc) + timedelta(minutes=eta_minutes + grace)).isoformat()
+    chat_id = str(update.effective_chat.id)
+    _state.set_watch_mode("leaving", eta_minutes, expires_at, chat_id)
+    await update.message.reply_text(
+        f"🚗 Commute mode on!\n\n"
+        f"ETA: {eta_minutes} minutes. I'll check every {_config.LEAVING_CHECK_INTERVAL} seconds.\n"
+        f"I'll alert you the moment a space appears, plus updates every 10 minutes.\n"
+        f"Auto-cancels {grace} minutes after your ETA.\n\n"
+        f"Send /unwatch to cancel."
+    )
+
+
+@_authorised
+async def cmd_unwatch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/unwatch — Cancel watch or leaving mode."""
+    watch = _state.get_watch_mode()
+    if watch is None:
+        await update.message.reply_text("ℹ️ No active watch mode to cancel.")
+        return
+    _state.clear_watch_mode()
+    mode_name = "Watch" if watch["mode"] == "watch" else "Commute"
+    await update.message.reply_text(
+        f"✅ {mode_name} mode cancelled. Returning to normal {_config.CHECK_INTERVAL}s polling."
+    )
+
+
+# ------------------------------------------------------------------
 # Natural language handler
 # ------------------------------------------------------------------
 
@@ -299,7 +366,13 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     """Handle plain text messages with keyword matching."""
     text = update.message.text.lower()
 
-    if any(kw in text for kw in ("free", "space", "available", "parking")):
+    if any(kw in text for kw in ("stop watching", "cancel watch", "unwatch", "stop watch")):
+        await cmd_unwatch(update, context)
+    elif any(kw in text for kw in ("leaving", "on my way", "heading home", "on the way")):
+        await cmd_leaving(update, context)
+    elif any(kw in text for kw in ("watch for me", "keep watching", "watch the street")):
+        await cmd_watch(update, context)
+    elif any(kw in text for kw in ("free", "space", "available", "parking")):
         await _send_status_reply(update)
     elif any(kw in text for kw in ("show", "camera", "photo", "see", "look")):
         await cmd_snapshot(update, context)
@@ -332,6 +405,9 @@ def _build_application(cfg: Config) -> Application:
     app.add_handler(CommandHandler("stats", cmd_stats))
     app.add_handler(CommandHandler("calibrate", cmd_calibrate))
     app.add_handler(CommandHandler("positions", cmd_positions))
+    app.add_handler(CommandHandler("watch", cmd_watch))
+    app.add_handler(CommandHandler("leaving", cmd_leaving))
+    app.add_handler(CommandHandler("unwatch", cmd_unwatch))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     return app
 

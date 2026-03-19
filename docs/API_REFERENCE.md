@@ -2,9 +2,40 @@
 
 The Smart Parking Monitor HTTP API runs on port 8080 (configurable via `API_PORT`).
 
-It is designed to be accessed securely via Tailscale VPN. There is no authentication — the network layer (Tailscale) provides security.
+It is designed to be accessed securely via Tailscale VPN or Tailscale Funnel (public HTTPS). Set `API_KEY` in `.env` to enable authentication.
 
-Base URL: `http://<tailscale-ip>:8080`
+Base URL (Tailscale VPN): `http://<tailscale-ip>:8080`
+Base URL (Tailscale Funnel): `https://<your-pi>.tail1234.ts.net`
+
+---
+
+## Authentication
+
+If `API_KEY` is set in `.env`, all endpoints except `/`, `/health`, `/dashboard`, `/manifest.json`, and `/sw.js` require authentication.
+
+Two methods are accepted:
+
+| Method | Header / Parameter | Notes |
+|--------|--------------------|-------|
+| HTTP header | `X-API-Key: <key>` | Preferred — use from curl, code, or the PWA dashboard |
+| Query parameter | `?key=<key>` | GET requests only — for Siri Shortcuts and browser bookmarks that cannot set headers |
+
+**Example with header:**
+```
+GET /status
+X-API-Key: your-secret-key
+```
+
+**Example with query parameter:**
+```
+GET /status?key=your-secret-key
+```
+
+Unauthorised requests receive:
+```json
+{"error": "Unauthorized"}
+```
+with HTTP 401.
 
 ---
 
@@ -221,6 +252,41 @@ GET http://100.x.y.z:8080/scan/json
 
 ---
 
+### `GET /scan/voice`
+
+Conversational street scan for Siri. Returns **plain text** designed to be read aloud naturally.
+
+Unlike `/scan`, this endpoint:
+- First checks the home spot; if free with medium/high confidence, short-circuits immediately
+- Otherwise performs a full street scan and builds a narrative walking through each position
+- Uses natural language phrases rather than position names
+
+> ⚠️ This takes 30–60 seconds. Set a longer timeout (90s recommended) in your Siri Shortcut.
+
+**Example request:**
+```
+GET http://100.x.y.z:8080/scan/voice
+```
+
+**Example responses:**
+
+Home spot free (short-circuit):
+```
+Good news — your spot directly outside is free. Head straight home.
+```
+
+Street scan with spaces found:
+```
+Checking your street now. Your spot directly outside is taken. Looking one or two cars to the left — that's taken. Looking further along on the left — there's a space there. Closest free space is further along on the left. I'd head there.
+```
+
+Street fully occupied:
+```
+Checking your street now. Your spot directly outside is taken. Looking one or two cars to the left — that's taken. Looking further along on the left — that's taken. Looking one or two cars to the right — that's taken. Looking further along on the right — that's taken. I've looked one or two cars to the left, further along on the left, one or two cars to the right, and further along on the right — the whole street looks full right now. Try again in a few minutes.
+```
+
+---
+
 ### `GET /snapshot`
 
 Returns the current camera frame as a JPEG image.
@@ -277,19 +343,38 @@ GET http://100.x.y.z:8080/stats
 
 ### `GET /health`
 
-System health check. Attempts a camera frame grab to test connectivity.
+System health check. Attempts a camera frame grab to test connectivity. Also reports active watch mode.
 
 **Example request:**
 ```
 GET http://100.x.y.z:8080/health
 ```
 
-**Example response (healthy):**
+**Example response (healthy, no watch mode):**
 ```json
 {
   "camera": "ok",
   "database": "ok",
-  "uptime_seconds": 86400
+  "uptime_seconds": 86400,
+  "watch_mode": {
+    "active": false,
+    "mode": null,
+    "expires_at": null
+  }
+}
+```
+
+**Example response (watch mode active):**
+```json
+{
+  "camera": "ok",
+  "database": "ok",
+  "uptime_seconds": 86400,
+  "watch_mode": {
+    "active": true,
+    "mode": "leaving",
+    "expires_at": "2026-03-18T10:30:00+00:00"
+  }
 }
 ```
 
@@ -298,7 +383,12 @@ GET http://100.x.y.z:8080/health
 {
   "camera": "error: Failed to grab frame after 3 attempts",
   "database": "ok",
-  "uptime_seconds": 3600
+  "uptime_seconds": 3600,
+  "watch_mode": {
+    "active": false,
+    "mode": null,
+    "expires_at": null
+  }
 }
 ```
 
@@ -320,8 +410,9 @@ Plain-text endpoints (`/status`, `/scan`) return HTTP 500 with a plain-text erro
 
 ## Notes
 
-- **Authentication**: Optional. Set `API_KEY` in `.env` to enable. Exempt routes: `/`, `/health`, `/dashboard`, `/manifest.json`, `/sw.js`.
+- **Authentication**: Optional. Set `API_KEY` in `.env` to enable. Two methods: `X-API-Key` header (all requests) or `?key=` query parameter (GET requests only, for Siri Shortcuts). Exempt routes: `/`, `/health`, `/dashboard`, `/manifest.json`, `/sw.js`.
+- **Tailscale Funnel**: For public HTTPS access without VPN, see [docs/TAILSCALE_FUNNEL.md](TAILSCALE_FUNNEL.md). Always set `API_KEY` when using Funnel.
 - **Concurrency**: The API server runs in a separate thread from the monitoring loop. The `TapoCamera` uses an `RLock` to serialise concurrent access safely.
-- **Timeouts**: `/scan` and `/health` may take 30–60+ seconds. Set appropriate timeouts in your Siri Shortcut (60+ seconds recommended).
+- **Timeouts**: `/scan`, `/scan/voice`, and `/health` may take 30–60+ seconds. Set appropriate timeouts in your Siri Shortcut (90+ seconds recommended).
 - **CORS**: Not configured. Use from native apps, the PWA dashboard, or curl only.
 - **PWA Dashboard**: Visit `/dashboard` in any browser. Installable on iPhone via Safari → Share → Add to Home Screen.

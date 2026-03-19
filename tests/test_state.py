@@ -147,6 +147,69 @@ class TestStateChanges:
         assert stats["state_changes_last_24h"] == 2
 
 
+class TestWatchMode:
+    def test_set_and_get_watch_mode(self, db):
+        from datetime import datetime, timedelta, timezone
+        expires_at = (datetime.now(timezone.utc) + timedelta(hours=2)).isoformat()
+        db.set_watch_mode("watch", 0, expires_at, "12345")
+        watch = db.get_watch_mode()
+        assert watch is not None
+        assert watch["mode"] == "watch"
+        assert watch["eta_minutes"] == 0
+        assert watch["chat_id"] == "12345"
+        assert watch["active"] == 1
+
+    def test_get_watch_mode_none_when_empty(self, db):
+        assert db.get_watch_mode() is None
+
+    def test_is_watch_active_false_when_empty(self, db):
+        assert db.is_watch_active() is False
+
+    def test_is_watch_active_true_when_set(self, db):
+        from datetime import datetime, timedelta, timezone
+        expires_at = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+        db.set_watch_mode("watch", 0, expires_at)
+        assert db.is_watch_active() is True
+
+    def test_clear_watch_mode(self, db):
+        from datetime import datetime, timedelta, timezone
+        expires_at = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+        db.set_watch_mode("watch", 0, expires_at)
+        db.clear_watch_mode()
+        assert db.get_watch_mode() is None
+
+    def test_set_watch_mode_deactivates_previous(self, db):
+        from datetime import datetime, timedelta, timezone
+        expires1 = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+        expires2 = (datetime.now(timezone.utc) + timedelta(hours=2)).isoformat()
+        db.set_watch_mode("watch", 0, expires1)
+        db.set_watch_mode("leaving", 30, expires2)
+        watch = db.get_watch_mode()
+        assert watch is not None
+        assert watch["mode"] == "leaving"
+        assert watch["eta_minutes"] == 30
+        # Only one active mode should exist
+        rows = db._conn.execute("SELECT COUNT(*) FROM watch_mode WHERE active = 1").fetchone()[0]
+        assert rows == 1
+
+    def test_get_watch_mode_auto_expires(self, db):
+        from datetime import datetime, timedelta, timezone
+        # Set an already-expired expires_at
+        past = (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat()
+        db.set_watch_mode("watch", 0, past)
+        # Should return None because it is expired
+        assert db.get_watch_mode() is None
+
+    def test_leaving_mode_stores_eta(self, db):
+        from datetime import datetime, timedelta, timezone
+        expires_at = (datetime.now(timezone.utc) + timedelta(hours=2)).isoformat()
+        db.set_watch_mode("leaving", 45, expires_at, "67890")
+        watch = db.get_watch_mode()
+        assert watch["mode"] == "leaving"
+        assert watch["eta_minutes"] == 45
+        assert watch["chat_id"] == "67890"
+
+
 class TestCalibrationMethods:
     def test_get_latest_calibration_empty(self, db):
         assert db.get_latest_calibration() is None
