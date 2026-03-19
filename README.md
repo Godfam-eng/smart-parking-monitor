@@ -141,8 +141,10 @@ python calibrate.py   # AI-assisted if ANTHROPIC_API_KEY is set, image-only othe
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `TAPO_IP` | — | Camera IP address (required) |
-| `TAPO_USER` | — | Camera admin username (required) |
-| `TAPO_PASSWORD` | — | Camera admin password (required) |
+| `TAPO_USER` | — | Camera Account username for RTSP streaming (required) |
+| `TAPO_PASSWORD` | — | Camera Account password for RTSP streaming (required) |
+| `TAPO_CLOUD_USER` | — | TP-Link cloud account email for pytapo API (pan/tilt). Falls back to `TAPO_USER` if blank. (optional) |
+| `TAPO_CLOUD_PASSWORD` | — | TP-Link cloud account password for pytapo API. Falls back to `TAPO_PASSWORD` if blank. (optional) |
 | `TAPO_RTSP_PORT` | `554` | RTSP port |
 | `TAPO_STREAM_PATH` | `stream1` | RTSP stream path |
 | `ANTHROPIC_API_KEY` | — | Claude API key (required) |

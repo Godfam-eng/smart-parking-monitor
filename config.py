@@ -26,6 +26,12 @@ class Config:
     TAPO_PASSWORD: str = ""
     TAPO_RTSP_PORT: int = 554
     TAPO_STREAM_PATH: str = "stream1"
+    # Optional: TP-Link cloud account credentials for pytapo API (pan/tilt control).
+    # Many C225 firmware versions require cloud credentials for the local API,
+    # while RTSP streaming uses Camera Account credentials.
+    # If left blank, TAPO_USER / TAPO_PASSWORD are used for both.
+    TAPO_CLOUD_USER: str = ""
+    TAPO_CLOUD_PASSWORD: str = ""
 
     # --- Anthropic Claude API ---
     ANTHROPIC_API_KEY: str = ""
@@ -126,6 +132,8 @@ def load_config() -> Config:
         TAPO_PASSWORD=os.getenv("TAPO_PASSWORD", ""),
         TAPO_RTSP_PORT=_safe_int("TAPO_RTSP_PORT", os.getenv("TAPO_RTSP_PORT", "554"), 554),
         TAPO_STREAM_PATH=os.getenv("TAPO_STREAM_PATH", "stream1"),
+        TAPO_CLOUD_USER=os.getenv("TAPO_CLOUD_USER", ""),
+        TAPO_CLOUD_PASSWORD=os.getenv("TAPO_CLOUD_PASSWORD", ""),
         ANTHROPIC_API_KEY=os.getenv("ANTHROPIC_API_KEY", ""),
         CLAUDE_MODEL=os.getenv("CLAUDE_MODEL", "claude-sonnet-4-5"),
         CLAUDE_MAX_TOKENS=_safe_int("CLAUDE_MAX_TOKENS", os.getenv("CLAUDE_MAX_TOKENS", "1024"), 1024),
@@ -248,6 +256,18 @@ def validate(config: Config, *, require_telegram: bool = True, require_anthropic
 
     if not config.API_KEY:
         logger.warning("API_KEY not set — HTTP API is unauthenticated (set API_KEY in .env to enable)")
+
+    if not config.TAPO_CLOUD_USER:
+        logger.warning(
+            "TAPO_CLOUD_USER is not set — using TAPO_USER for pytapo API. "
+            "If you get 'Invalid authentication data', set TAPO_CLOUD_USER / TAPO_CLOUD_PASSWORD "
+            "to your TP-Link cloud account credentials."
+        )
+    elif not config.TAPO_CLOUD_PASSWORD:
+        logger.warning(
+            "TAPO_CLOUD_USER is set but TAPO_CLOUD_PASSWORD is empty — "
+            "falling back to camera account (TAPO_USER) credentials for pytapo API."
+        )
 
     logger.info("Configuration validated successfully.")
     return True
