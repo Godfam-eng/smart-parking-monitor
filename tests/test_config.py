@@ -227,6 +227,71 @@ class TestCloudCredentialsConfig:
         assert validate(cfg) is True
 
 
+class TestApiCredentialsConfig:
+    def test_api_credentials_default_to_empty(self, monkeypatch):
+        """TAPO_API_USER and TAPO_API_PASSWORD default to empty strings."""
+        monkeypatch.delenv("TAPO_API_USER", raising=False)
+        monkeypatch.delenv("TAPO_API_PASSWORD", raising=False)
+        cfg = load_config()
+        assert cfg.TAPO_API_USER == ""
+        assert cfg.TAPO_API_PASSWORD == ""
+
+    def test_api_user_from_env(self, monkeypatch):
+        monkeypatch.setenv("TAPO_API_USER", "admin")
+        cfg = load_config()
+        assert cfg.TAPO_API_USER == "admin"
+
+    def test_api_password_from_env(self, monkeypatch):
+        monkeypatch.setenv("TAPO_API_PASSWORD", "secret123")
+        cfg = load_config()
+        assert cfg.TAPO_API_PASSWORD == "secret123"
+
+    def test_validate_does_not_require_api_credentials(self):
+        """TAPO_API_USER / TAPO_API_PASSWORD are optional — validation must pass without them."""
+        cfg = Config(
+            TAPO_IP="192.168.1.1",
+            TAPO_USER="admin",
+            TAPO_PASSWORD="password",
+            ANTHROPIC_API_KEY="sk-ant-key",
+            TELEGRAM_BOT_TOKEN="1234:ABC",
+            TELEGRAM_CHAT_ID="987654",
+            TAPO_API_USER="",
+            TAPO_API_PASSWORD="",
+        )
+        assert validate(cfg) is True
+
+    def test_validate_passes_with_api_credentials(self):
+        """Validation must also pass when API credentials are supplied."""
+        cfg = Config(
+            TAPO_IP="192.168.1.1",
+            TAPO_USER="cam_user",
+            TAPO_PASSWORD="cam_pass",
+            ANTHROPIC_API_KEY="sk-ant-key",
+            TELEGRAM_BOT_TOKEN="1234:ABC",
+            TELEGRAM_CHAT_ID="987654",
+            TAPO_API_USER="admin",
+            TAPO_API_PASSWORD="cam_pass",
+        )
+        assert validate(cfg) is True
+
+    def test_api_credentials_take_priority_over_cloud(self):
+        """TAPO_API_USER / TAPO_API_PASSWORD take priority when both are set."""
+        cfg = Config(
+            TAPO_API_USER="admin",
+            TAPO_API_PASSWORD="api_pass",
+            TAPO_CLOUD_USER="cloud@example.com",
+            TAPO_CLOUD_PASSWORD="cloud_pass",
+            TAPO_USER="cam_user",
+            TAPO_PASSWORD="cam_pass",
+        )
+        # The Config dataclass just stores values; priority logic is in camera.py.
+        # Verify all three sets are correctly stored.
+        assert cfg.TAPO_API_USER == "admin"
+        assert cfg.TAPO_API_PASSWORD == "api_pass"
+        assert cfg.TAPO_CLOUD_USER == "cloud@example.com"
+        assert cfg.TAPO_CLOUD_PASSWORD == "cloud_pass"
+
+
 class TestCalibrationConfig:
     def test_calibration_defaults(self, monkeypatch):
         for key in ("AUTO_CALIBRATE", "CALIBRATION_INTERVAL_DAYS", "CALIBRATION_MIN_USEFULNESS", "CALIBRATION_ANGLES"):

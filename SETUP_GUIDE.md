@@ -17,13 +17,14 @@ Create accounts and gather credentials **before** you sit down at the Pi:
   2. Tap ⚙️ → **Advanced Settings** → **Camera Account**
   3. Create a dedicated **username** and **password** (write them down)
   4. Also enable **RTSP**: ⚙️ → **Advanced Settings** → **RTSP** → toggle on
+  5. Enable **Third-Party Compatibility**: ⚙️ → **Advanced Settings** → **Third-Party Compatibility** → toggle on
+     > This allows pytapo (used for pan/tilt control) to authenticate with local credentials instead of cloud credentials.
 
   > ⚠️ These credentials are **NOT** your TP-Link cloud login.  The camera account is separate.
 
-- [ ] **Tapo C225 — TP-Link Cloud Account** (needed for pan/tilt control):
-  - Note your **TP-Link cloud email and password** (the credentials you use to log in to the Tapo app).
-  - Many C225 firmware versions require cloud credentials for the pytapo local API (pan/tilt), while RTSP streaming uses the Camera Account credentials above.
-  - You will set these as `TAPO_CLOUD_USER` / `TAPO_CLOUD_PASSWORD` in `.env`.
+- [ ] **Tapo C225 — TP-Link Cloud Account** (fallback for pan/tilt control, if Third-Party Compatibility is not available):
+  - If you cannot enable Third-Party Compatibility, note your **TP-Link cloud email and password** (the credentials you use to log in to the Tapo app).
+  - You will set these as `TAPO_API_USER` / `TAPO_API_PASSWORD` in `.env`.
 
 ---
 
@@ -107,8 +108,8 @@ Fill in every value.  Key fields:
 | `TAPO_IP` | Router DHCP table or Tapo app → Device Info |
 | `TAPO_USER` | Camera Account username you created in Pre-Arrival step |
 | `TAPO_PASSWORD` | Camera Account password you created in Pre-Arrival step |
-| `TAPO_CLOUD_USER` | Your TP-Link cloud account email (Tapo app login) — used for pan/tilt API |
-| `TAPO_CLOUD_PASSWORD` | Your TP-Link cloud account password — used for pan/tilt API |
+| `TAPO_API_USER` | `admin` (with Third-Party Compatibility on) or your TP-Link cloud email |
+| `TAPO_API_PASSWORD` | Camera Account password (with Third-Party Compatibility) or cloud password |
 | `ANTHROPIC_API_KEY` | https://console.anthropic.com |
 | `TELEGRAM_BOT_TOKEN` | From BotFather |
 | `TELEGRAM_CHAT_ID` | Send `/start` to your bot, then visit:<br>`https://api.telegram.org/bot<TOKEN>/getUpdates` |
@@ -421,12 +422,25 @@ print(result)
 
 ### "Cannot connect to Tapo camera" / pytapo authentication error
 
-1. The Tapo C225 uses **two separate credential systems**:
-   - **RTSP streaming** → Camera Account credentials (`TAPO_USER` / `TAPO_PASSWORD`)
-   - **pytapo API (pan/tilt)** → TP-Link cloud account credentials (`TAPO_CLOUD_USER` / `TAPO_CLOUD_PASSWORD`)
-2. Set `TAPO_CLOUD_USER` and `TAPO_CLOUD_PASSWORD` in `.env` to your TP-Link cloud account email and password (the same credentials you use to log in to the Tapo app).
-3. Check the camera is on the same network as the Pi: `ping <TAPO_IP>`
-4. Try reinstalling pytapo: `pip install --upgrade pytapo`
+The pytapo API (used for pan/tilt control) uses different credentials than RTSP streaming.
+
+**Recommended fix — enable Third-Party Compatibility:**
+1. Open the Tapo app → tap camera → ⚙️ → Advanced Settings → Third-Party Compatibility → ON
+2. Set in `.env`:
+   ```
+   TAPO_API_USER=admin
+   TAPO_API_PASSWORD=<same password as TAPO_PASSWORD>
+   ```
+3. Test: `python -c "from pytapo import Tapo; t = Tapo('YOUR_IP', 'admin', 'YOUR_PASSWORD'); print('OK:', t.getBasicInfo()['device_info']['basic_info']['device_model'])"`
+
+**Alternative — use cloud credentials:**
+1. Set `TAPO_API_USER` to your TP-Link account email
+2. Set `TAPO_API_PASSWORD` to your TP-Link account password
+
+**Still failing?**
+- Check the camera is on the same network: `ping <TAPO_IP>`
+- Try upgrading pytapo: `pip install --upgrade pytapo`
+- If you have 2FA on your TP-Link account, disable it (pytapo doesn't support 2FA)
 
 ### `externally-managed-environment` pip error
 
