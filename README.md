@@ -182,6 +182,7 @@ python calibrate.py   # AI-assisted if ANTHROPIC_API_KEY is set, image-only othe
 | `WATCH_TIMEOUT_HOURS` | `2` | Auto-cancel timeout for `/watch` mode (hours) |
 | `LEAVING_GRACE_MINUTES` | `30` | Extra minutes after ETA expires before `/leaving` auto-cancels |
 | `LEAVING_DEFAULT_MINUTES` | `30` | Default ETA when `/leaving` is used without an argument |
+| `LEAVING_UPDATE_INTERVAL` | `600` | Interval (seconds) between proactive status updates in `/leaving` mode |
 
 ---
 

@@ -280,16 +280,14 @@ def _build_voice_narrative(home_result: dict, scan_results: list) -> str:
             continue
         status = result.get("status", "UNKNOWN")
         description = result.get("description", "")
-        phrase = _POSITION_PHRASES.get(pos_key, pos_key)
         status_phrase = _STATUS_PHRASES.get(status, "I can't quite tell")
+        phrase = _POSITION_PHRASES.get(pos_key, pos_key)
+        line = f"Looking {phrase} — {status_phrase}."
 
         if status == "FREE":
-            line = f"Looking {phrase} — {status_phrase}."
             if description:
                 line += f" {description}"
             free_spaces.append((pos_key, phrase))
-        else:
-            line = f"Looking {phrase} — {status_phrase}."
         lines.append(line)
 
     # Summary

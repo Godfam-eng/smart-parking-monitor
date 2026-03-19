@@ -68,6 +68,8 @@ This shortcut scans the entire street for any free space.
 ---
 
 ## Adding a Home Screen Widget
+
+1. Long-press your iPhone home screen
 2. Tap **+** (Add Widget)
 3. Find **Shortcuts**
 4. Choose the **2×2** widget

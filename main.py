@@ -126,7 +126,7 @@ def _run_monitoring_loop(
             # 7. Watch mode: proactive updates for /leaving mode
             if is_watching and watch["mode"] == "leaving":
                 now = time.monotonic()
-                if now - _last_watch_update >= 600:  # 10 minutes
+                if now - _last_watch_update >= config.LEAVING_UPDATE_INTERVAL:
                     _last_watch_update = now
                     if status == "FREE":
                         notifications.send_telegram(

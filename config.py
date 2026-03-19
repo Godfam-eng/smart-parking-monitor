@@ -118,6 +118,7 @@ class Config:
     WATCH_TIMEOUT_HOURS: int = 2          # Auto-cancel timeout for /watch
     LEAVING_GRACE_MINUTES: int = 30       # Extra time after ETA expires before auto-cancel
     LEAVING_DEFAULT_MINUTES: int = 30     # Default ETA when /leaving is used without argument
+    LEAVING_UPDATE_INTERVAL: int = 600    # Interval (seconds) for proactive /leaving updates
 
 
 def _parse_scan_positions(raw: str) -> List[int]:
@@ -210,6 +211,7 @@ def load_config() -> Config:
         WATCH_TIMEOUT_HOURS=_safe_int("WATCH_TIMEOUT_HOURS", os.getenv("WATCH_TIMEOUT_HOURS", "2"), 2),
         LEAVING_GRACE_MINUTES=_safe_int("LEAVING_GRACE_MINUTES", os.getenv("LEAVING_GRACE_MINUTES", "30"), 30),
         LEAVING_DEFAULT_MINUTES=_safe_int("LEAVING_DEFAULT_MINUTES", os.getenv("LEAVING_DEFAULT_MINUTES", "30"), 30),
+        LEAVING_UPDATE_INTERVAL=_safe_int("LEAVING_UPDATE_INTERVAL", os.getenv("LEAVING_UPDATE_INTERVAL", "600"), 600),
     )
 
 
