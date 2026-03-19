@@ -321,3 +321,40 @@ class TestCalibrationConfig:
         monkeypatch.setenv("CALIBRATION_ANGLES", "-45,0,45")
         cfg = load_config()
         assert cfg.CALIBRATION_ANGLES == [-45, 0, 45]
+
+
+class TestSafePanBoundsConfig:
+    def test_safe_pan_bounds_default_to_hardware_range(self, monkeypatch):
+        """SAFE_PAN_MIN and SAFE_PAN_MAX default to the full hardware range."""
+        monkeypatch.delenv("SAFE_PAN_MIN", raising=False)
+        monkeypatch.delenv("SAFE_PAN_MAX", raising=False)
+        cfg = load_config()
+        assert cfg.SAFE_PAN_MIN == -180
+        assert cfg.SAFE_PAN_MAX == 180
+
+    def test_safe_pan_min_from_env(self, monkeypatch):
+        monkeypatch.setenv("SAFE_PAN_MIN", "-60")
+        cfg = load_config()
+        assert cfg.SAFE_PAN_MIN == -60
+
+    def test_safe_pan_max_from_env(self, monkeypatch):
+        monkeypatch.setenv("SAFE_PAN_MAX", "60")
+        cfg = load_config()
+        assert cfg.SAFE_PAN_MAX == 60
+
+    def test_safe_pan_bounds_from_env(self, monkeypatch):
+        monkeypatch.setenv("SAFE_PAN_MIN", "-45")
+        monkeypatch.setenv("SAFE_PAN_MAX", "75")
+        cfg = load_config()
+        assert cfg.SAFE_PAN_MIN == -45
+        assert cfg.SAFE_PAN_MAX == 75
+
+    def test_safe_pan_min_invalid_falls_back_to_default(self, monkeypatch):
+        monkeypatch.setenv("SAFE_PAN_MIN", "not_a_number")
+        cfg = load_config()
+        assert cfg.SAFE_PAN_MIN == -180
+
+    def test_safe_pan_max_invalid_falls_back_to_default(self, monkeypatch):
+        monkeypatch.setenv("SAFE_PAN_MAX", "not_a_number")
+        cfg = load_config()
+        assert cfg.SAFE_PAN_MAX == 180

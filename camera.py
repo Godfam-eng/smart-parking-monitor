@@ -84,6 +84,10 @@ class TapoCamera:
         # grab_frame() internally without deadlocking, while still serialising
         # concurrent access from the monitoring loop, bot, and API threads.
         self._lock = threading.RLock()
+        # Safe pan bounds — narrowed by calibration to the range where
+        # the street is visible through the window.
+        self._safe_pan_min: int = config.SAFE_PAN_MIN
+        self._safe_pan_max: int = config.SAFE_PAN_MAX
 
     # ------------------------------------------------------------------
     # Connection
@@ -152,6 +156,22 @@ class TapoCamera:
     # Position calibration
     # ------------------------------------------------------------------
 
+    def set_safe_pan_bounds(self, pan_min: int, pan_max: int) -> None:
+        """Update the safe pan range (called after calibration completes).
+
+        Clamps the supplied bounds to the hardware limits and ensures
+        pan_min ≤ pan_max (swapping if necessary).
+        """
+        with self._lock:
+            self._safe_pan_min = max(_PAN_MIN, min(pan_min, _PAN_MAX))
+            self._safe_pan_max = max(_PAN_MIN, min(pan_max, _PAN_MAX))
+            if self._safe_pan_min > self._safe_pan_max:
+                self._safe_pan_min, self._safe_pan_max = self._safe_pan_max, self._safe_pan_min
+            logger.info(
+                "Safe pan bounds updated: [%d°, %d°]",
+                self._safe_pan_min, self._safe_pan_max,
+            )
+
     def calibrate_position(self) -> None:
         """
         Drive the camera to its physical left end-stop to establish a known
@@ -205,6 +225,31 @@ class TapoCamera:
             logger.info(
                 "Camera calibrated: position reset to pan=%d (left end-stop)", _PAN_MIN
             )
+
+            # If safe bounds are narrower than the hardware range, move into
+            # the safe zone immediately so the camera doesn't linger on
+            # blinds, walls, or ceiling.
+            if self._safe_pan_min > _PAN_MIN:
+                logger.info(
+                    "Moving from end-stop (%d°) into safe range (%d°)",
+                    _PAN_MIN, self._safe_pan_min,
+                )
+                delta = self._safe_pan_min - _PAN_MIN
+                try:
+                    self.tapo.moveMotor(delta, 0)
+                    time.sleep(self.config.SCAN_SETTLE_TIME)
+                except Exception as exc:
+                    if _is_motor_locked_rotor(exc):
+                        logger.warning(
+                            "MOTOR_LOCKED_ROTOR while moving into safe range — "
+                            "position may be approximate"
+                        )
+                    else:
+                        logger.error(
+                            "Failed to move into safe range after calibration: %s", exc
+                        )
+                        raise
+                self._current_pan = self._safe_pan_min
 
     # ------------------------------------------------------------------
     # RTSP helpers
@@ -293,9 +338,16 @@ class TapoCamera:
             if self.tapo is None:
                 raise RuntimeError("Camera not connected. Call connect() first.")
 
-            # Clamp to safe hardware range
-            pan_target = max(_PAN_MIN, min(_PAN_MAX, pan_angle))
+            # Clamp to safe viewing bounds (within hardware limits)
+            pan_target = max(self._safe_pan_min, min(self._safe_pan_max, pan_angle))
             tilt_target = max(_TILT_MIN, min(_TILT_MAX, tilt_angle))
+
+            # Skip motor command if we're already at the target position
+            if pan_target == self._current_pan and tilt_target == self._current_tilt:
+                logger.debug(
+                    "Already at pan=%d, tilt=%d — skipping move", pan_target, tilt_target
+                )
+                return
 
             # Compute relative deltas from the last known position
             pan_delta = pan_target - self._current_pan

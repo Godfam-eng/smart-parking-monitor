@@ -32,6 +32,7 @@ class ParkingState:
         self._conn = sqlite3.connect(db_path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._create_tables()
+        self._migrate_schema()
         logger.info("ParkingState initialised with database: %s", db_path)
 
     # ------------------------------------------------------------------
@@ -68,7 +69,9 @@ class ParkingState:
                     parking_side         TEXT    NOT NULL DEFAULT 'near',
                     opposite_restriction TEXT    NOT NULL DEFAULT 'double_yellow',
                     street_description   TEXT,
-                    angle_count          INTEGER DEFAULT 0
+                    angle_count          INTEGER DEFAULT 0,
+                    safe_pan_min         INTEGER DEFAULT -180,
+                    safe_pan_max         INTEGER DEFAULT 180
                 );
 
                 CREATE TABLE IF NOT EXISTS calibration_angles (
@@ -92,6 +95,37 @@ class ParkingState:
                     ON state_changes (timestamp);
                 """
             )
+
+    def _migrate_schema(self) -> None:
+        """Apply incremental schema migrations for backwards compatibility.
+
+        Adds columns that were introduced after the initial schema so that
+        existing databases are upgraded automatically on startup.
+        """
+        # Each entry is (table, column, column_definition).  Values are
+        # hardcoded literals — never user-supplied — so SQL construction is safe.
+        migrations = [
+            ("calibrations", "safe_pan_min", "INTEGER DEFAULT -180"),
+            ("calibrations", "safe_pan_max", "INTEGER DEFAULT 180"),
+        ]
+        with self._conn:
+            for table, column, column_def in migrations:
+                # Validate that table/column are safe identifiers (letters, digits, _)
+                # before embedding them in the ALTER TABLE statement.
+                if not table.replace("_", "").isalnum() or not column.replace("_", "").isalnum():
+                    logger.warning(
+                        "Skipping migration: unsafe identifier table=%r column=%r",
+                        table, column,
+                    )
+                    continue
+                try:
+                    self._conn.execute(
+                        f"ALTER TABLE {table} ADD COLUMN {column} {column_def}"  # noqa: S608
+                    )
+                    logger.info("Schema migration: added column %s.%s", table, column)
+                except Exception:
+                    # Column already exists — safe to ignore
+                    pass
 
     # ------------------------------------------------------------------
     # Write operations
@@ -344,8 +378,9 @@ class ParkingState:
                     """
                     INSERT INTO calibrations (
                         timestamp, home_position, scan_positions, parking_side,
-                        opposite_restriction, street_description, angle_count
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                        opposite_restriction, street_description, angle_count,
+                        safe_pan_min, safe_pan_max
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         result.timestamp,
@@ -355,6 +390,8 @@ class ParkingState:
                         result.opposite_restriction,
                         result.street_description,
                         len(result.angle_scores),
+                        getattr(result, "safe_pan_min", -180),
+                        getattr(result, "safe_pan_max", 180),
                     ),
                 )
                 calibration_id = cur.lastrowid
@@ -381,10 +418,12 @@ class ParkingState:
                     )
 
         logger.info(
-            "Saved calibration ID=%d: home=%d, positions=%s",
+            "Saved calibration ID=%d: home=%d, positions=%s, safe_pan=[%d°, %d°]",
             calibration_id,
             result.home_position,
             result.scan_positions,
+            getattr(result, "safe_pan_min", -180),
+            getattr(result, "safe_pan_max", 180),
         )
         return calibration_id
 
@@ -405,6 +444,11 @@ class ParkingState:
             data["scan_positions"] = json.loads(data.get("scan_positions", "[]"))
         except (json.JSONDecodeError, TypeError):
             data["scan_positions"] = []
+        # Provide defaults for columns added by migration (older rows may be NULL)
+        if data.get("safe_pan_min") is None:
+            data["safe_pan_min"] = -180
+        if data.get("safe_pan_max") is None:
+            data["safe_pan_max"] = 180
         return data
 
     def get_calibration_angles(self, calibration_id: int) -> list:

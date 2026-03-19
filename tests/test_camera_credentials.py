@@ -134,3 +134,74 @@ class TestConnectCredentialPriority:
         assert "cam_user" in url
         assert "cam_pass" in url
         assert "admin" not in url
+
+
+class TestSetSafePanBounds:
+    """Verify that set_safe_pan_bounds() correctly updates and clamps the safe range."""
+
+    def test_set_safe_pan_bounds_basic(self):
+        cfg = _make_cfg()
+        cam = TapoCamera(cfg)
+        cam.set_safe_pan_bounds(-60, 60)
+        assert cam._safe_pan_min == -60
+        assert cam._safe_pan_max == 60
+
+    def test_set_safe_pan_bounds_clamps_to_hardware_limits(self):
+        cfg = _make_cfg()
+        cam = TapoCamera(cfg)
+        cam.set_safe_pan_bounds(-999, 999)
+        assert cam._safe_pan_min == -180
+        assert cam._safe_pan_max == 180
+
+    def test_set_safe_pan_bounds_swaps_if_inverted(self):
+        """If pan_min > pan_max, the values should be swapped."""
+        cfg = _make_cfg()
+        cam = TapoCamera(cfg)
+        cam.set_safe_pan_bounds(60, -60)
+        assert cam._safe_pan_min == -60
+        assert cam._safe_pan_max == 60
+
+    def test_initialised_from_config(self):
+        """Safe bounds are initialised from config on construction."""
+        cfg = _make_cfg(SAFE_PAN_MIN=-45, SAFE_PAN_MAX=45)
+        cam = TapoCamera(cfg)
+        assert cam._safe_pan_min == -45
+        assert cam._safe_pan_max == 45
+
+
+class TestMoveToAngleSafeBounds:
+    """Verify that move_to_angle() clamps movement to the safe pan bounds."""
+
+    def _make_connected_cam(self, safe_pan_min=-180, safe_pan_max=180):
+        """Return a TapoCamera with a mock tapo connection and given safe bounds."""
+        cfg = _make_cfg(SAFE_PAN_MIN=safe_pan_min, SAFE_PAN_MAX=safe_pan_max)
+        cam = TapoCamera(cfg)
+        cam.tapo = MagicMock()
+        cam._current_pan = 0
+        cam._current_tilt = 0
+        return cam
+
+    def test_move_within_safe_bounds(self):
+        cam = self._make_connected_cam(safe_pan_min=-60, safe_pan_max=60)
+        cam.move_to_angle(30)
+        cam.tapo.moveMotor.assert_called_once_with(30, 0)
+
+    def test_move_clamped_to_safe_max(self):
+        cam = self._make_connected_cam(safe_pan_min=-60, safe_pan_max=60)
+        cam.move_to_angle(90)  # Exceeds safe_pan_max=60
+        # Should clamp to 60; delta from 0 is 60
+        cam.tapo.moveMotor.assert_called_once_with(60, 0)
+
+    def test_move_clamped_to_safe_min(self):
+        cam = self._make_connected_cam(safe_pan_min=-60, safe_pan_max=60)
+        cam.move_to_angle(-90)  # Exceeds safe_pan_min=-60
+        # Should clamp to -60; delta from 0 is -60
+        cam.tapo.moveMotor.assert_called_once_with(-60, 0)
+
+    def test_zero_delta_optimization_skips_motor_call(self):
+        """If already at the target, moveMotor should not be called."""
+        cam = self._make_connected_cam()
+        cam._current_pan = 30
+        cam._current_tilt = 0
+        cam.move_to_angle(30, 0)
+        cam.tapo.moveMotor.assert_not_called()

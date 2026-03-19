@@ -23,7 +23,7 @@ from datetime import datetime
 from typing import List, Optional
 
 from config import Config
-from camera import TapoCamera
+from camera import TapoCamera, _PAN_MIN, _PAN_MAX
 from vision import ParkingVision
 from state import ParkingState
 from notifications import NotificationManager
@@ -46,6 +46,8 @@ class CalibrationResult:
     opposite_restriction: str   # "double_yellow", "single_yellow", "none", "unclear"
     angle_scores: List[dict]    # Claude's full assessment dict per angle
     street_description: str     # Description from the highest-scoring angle
+    safe_pan_min: int = -180    # leftmost useful angle (derived from calibration)
+    safe_pan_max: int = 180     # rightmost useful angle (derived from calibration)
 
 
 # ---------------------------------------------------------------------------
@@ -128,11 +130,16 @@ class AutoCalibrator:
 
         result = self._select_positions(angle_scores)
         self.state.save_calibration(result)
+        # Apply safe pan bounds to the camera immediately so subsequent
+        # movements are constrained to the street-visible range.
+        self.camera.set_safe_pan_bounds(result.safe_pan_min, result.safe_pan_max)
         self._send_final_summary(result, angle_scores)
         logger.info(
-            "Calibration complete: home=%d, positions=%s",
+            "Calibration complete: home=%d, positions=%s, safe_pan=[%d°, %d°]",
             result.home_position,
             result.scan_positions,
+            result.safe_pan_min,
+            result.safe_pan_max,
         )
         return result
 
@@ -157,6 +164,8 @@ class AutoCalibrator:
             opposite_restriction=cal_data.get("opposite_restriction", "double_yellow"),
             angle_scores=angle_scores,
             street_description=cal_data.get("street_description", ""),
+            safe_pan_min=cal_data.get("safe_pan_min", -180),
+            safe_pan_max=cal_data.get("safe_pan_max", 180),
         )
 
     def needs_calibration(self) -> bool:
@@ -282,6 +291,19 @@ class AutoCalibrator:
         else:
             street_description = ""
 
+        # Safe pan bounds: outermost useful angles ± padding so the camera
+        # can move slightly beyond the last good angle without pointing at
+        # blinds/walls.  Falls back to full hardware range if no useful angles.
+        _SAFE_BOUND_PADDING = 15  # degrees of margin beyond outermost useful angle
+        if useful:
+            raw_min = min(s["angle"] for s in useful)
+            raw_max = max(s["angle"] for s in useful)
+            safe_pan_min = max(_PAN_MIN, raw_min - _SAFE_BOUND_PADDING)
+            safe_pan_max = min(_PAN_MAX, raw_max + _SAFE_BOUND_PADDING)
+        else:
+            safe_pan_min = _PAN_MIN
+            safe_pan_max = _PAN_MAX
+
         return CalibrationResult(
             timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             home_position=home_position,
@@ -290,6 +312,8 @@ class AutoCalibrator:
             opposite_restriction=opposite_restriction,
             angle_scores=angle_scores,
             street_description=street_description,
+            safe_pan_min=safe_pan_min,
+            safe_pan_max=safe_pan_max,
         )
 
     def _send_final_summary(self, result: CalibrationResult, angle_scores: List[dict]) -> None:
@@ -308,6 +332,7 @@ class AutoCalibrator:
             "✅ Calibration complete!\n\n"
             f"🏠 Home position: {result.home_position}°\n"
             f"🔍 Scan positions: {scan_str}\n"
+            f"🔧 Safe pan bounds: [{result.safe_pan_min:+d}°, {result.safe_pan_max:+d}°]\n"
             f"🅿️ Parking side: {result.parking_side}\n"
             f"🟡 Opposite side: {restriction_label}\n\n"
             f"📊 Scores:\n{scores_lines}"
