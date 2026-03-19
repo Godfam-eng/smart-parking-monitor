@@ -81,6 +81,7 @@ def _run_monitoring_loop(
 
     last_cleanup = datetime.now(timezone.utc)
     _last_watch_update = time.monotonic()
+    _scan_counter = 0
 
     while not _shutdown_event.is_set():
         loop_start = time.monotonic()
@@ -142,6 +143,36 @@ def _run_monitoring_loop(
                                 f"{mins} minutes remaining before auto-cancel."
                             )
                         )
+
+            # 8. Periodic background scan to populate the scan cache.
+            #    Uses early-exit iteration: stops as soon as a free space is found.
+            _scan_counter += 1
+            if config.BACKGROUND_SCAN_EVERY > 0 and _scan_counter >= config.BACKGROUND_SCAN_EVERY:
+                _scan_counter = 0
+                try:
+                    logger.info("Running background scan for cache…")
+                    scan_results = []
+                    for pos in camera.scan_street_iter():
+                        vis_result = vision.check_scan_position(pos["image"], pos["position_name"])
+                        entry = {
+                            "position_name": pos["position_name"],
+                            "angle": pos["angle"],
+                            "status": vis_result.get("status", "UNKNOWN"),
+                            "confidence": vis_result.get("confidence", "low"),
+                            "description": vis_result.get("description", ""),
+                        }
+                        scan_results.append(entry)
+                    # Build summary
+                    free_positions = [r for r in scan_results if r["status"] == "FREE"]
+                    if free_positions:
+                        names = ", ".join(r["position_name"] for r in free_positions)
+                        summary = f"Free spaces found: {names}"
+                    else:
+                        summary = "No free spaces found on the street"
+                    state.save_scan_cache(scan_results, summary)
+                    logger.info("Background scan cached: %s", summary)
+                except Exception as exc:
+                    logger.warning("Background scan failed: %s", exc)
 
         except Exception as exc:
             logger.error("Error in monitoring loop iteration: %s", exc, exc_info=True)

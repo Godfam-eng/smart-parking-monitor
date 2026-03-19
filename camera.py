@@ -16,7 +16,7 @@ import logging
 import threading
 import time
 import urllib.parse
-from typing import List, Optional
+from typing import Generator, List, Optional
 
 import cv2
 from pytapo import Tapo
@@ -59,6 +59,96 @@ def _angle_to_position_name(angle: int) -> str:
     return "far right" if angle > 90 else "far left"
 
 
+def _adaptive_settle(delta_degrees: int, max_settle: float) -> float:
+    """Return settle time in seconds proportional to the pan movement distance.
+
+    Uses *max_settle* (from config.SCAN_SETTLE_TIME) as the ceiling so that
+    large sweeps still get the full configured delay.  Small adjustments get a
+    reduced settle time, saving several seconds per scan.
+
+    Args:
+        delta_degrees: Absolute movement distance in degrees.
+        max_settle:    Maximum allowed settle time (ceiling).
+
+    Returns:
+        Settle time in seconds.
+    """
+    abs_delta = abs(delta_degrees)
+    if abs_delta <= 10:
+        return min(0.5, max_settle)
+    elif abs_delta <= 30:
+        return min(1.0, max_settle)
+    elif abs_delta <= 60:
+        return min(1.5, max_settle)
+    else:
+        return max_settle  # full time for large sweeps
+
+
+# Seconds to wait before attempting to reconnect the RTSP stream after a failure.
+_RTSP_RECONNECT_DELAY: float = 1.0
+
+
+class RTSPStream:
+    """Persistent RTSP connection with a 1-frame rolling buffer.
+
+    Keeps a ``cv2.VideoCapture`` open in a background daemon thread and
+    continuously reads frames into a single-slot buffer protected by a lock.
+    ``get_frame()`` returns the latest buffered frame without reopening the
+    connection — eliminating the ~1.5 s TCP/RTSP handshake on every grab.
+
+    The thread reconnects automatically after any failure with a brief pause
+    (``_RTSP_RECONNECT_DELAY``) between attempts.
+    """
+
+    def __init__(self, rtsp_url: str) -> None:
+        self._url = rtsp_url
+        self._frame: Optional[bytes] = None
+        self._lock = threading.Lock()
+        self._running = False
+        self._thread: Optional[threading.Thread] = None
+
+    def start(self) -> None:
+        """Start the background capture thread."""
+        self._running = True
+        self._thread = threading.Thread(
+            target=self._capture_loop, daemon=True, name="RTSPStream"
+        )
+        self._thread.start()
+
+    def _capture_loop(self) -> None:
+        """Continuously read frames, reconnecting on failure."""
+        while self._running:
+            cap: Optional[cv2.VideoCapture] = None
+            try:
+                cap = cv2.VideoCapture(self._url)
+                cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                while self._running and cap.isOpened():
+                    ret, frame = cap.read()
+                    if not ret:
+                        break
+                    _, buf = cv2.imencode(".jpg", frame)
+                    with self._lock:
+                        self._frame = buf.tobytes()
+            except Exception:
+                pass
+            finally:
+                if cap is not None:
+                    cap.release()
+            if self._running:
+                time.sleep(_RTSP_RECONNECT_DELAY)
+
+    def get_frame(self) -> Optional[bytes]:
+        """Return the most recent buffered frame, or None if not yet available."""
+        with self._lock:
+            return self._frame
+
+    def stop(self) -> None:
+        """Stop the background capture thread and wait for it to finish."""
+        self._running = False
+        if self._thread is not None:
+            self._thread.join(timeout=5)
+
+
 def _is_motor_locked_rotor(exc: Exception) -> bool:
     """Return True if *exc* indicates a MOTOR_LOCKED_ROTOR hardware error.
 
@@ -88,6 +178,10 @@ class TapoCamera:
         # the street is visible through the window.
         self._safe_pan_min: int = config.SAFE_PAN_MIN
         self._safe_pan_max: int = config.SAFE_PAN_MAX
+        # Persistent RTSP stream — started by connect(), stopped by disconnect().
+        # grab_frame() reads from this buffer first; falls back to per-call
+        # VideoCapture when the stream is not available.
+        self._rtsp_stream: Optional[RTSPStream] = None
 
     # ------------------------------------------------------------------
     # Connection
@@ -146,6 +240,12 @@ class TapoCamera:
                     "Connected to Tapo camera at %s", self.config.TAPO_IP
                 )
                 self.calibrate_position()
+
+                # Start persistent RTSP stream to avoid per-call reconnect overhead.
+                rtsp_url = self.get_rtsp_url()
+                self._rtsp_stream = RTSPStream(rtsp_url)
+                self._rtsp_stream.start()
+                logger.info("Persistent RTSP stream started")
             except ConnectionError:
                 raise
             except Exception as exc:
@@ -269,7 +369,11 @@ class TapoCamera:
         """
         Capture a single JPEG frame from the RTSP stream.
 
-        Retries up to 3 times with 2-second delays.
+        Tries the persistent RTSP stream buffer first (fast, no reconnect).
+        Falls back to opening a new VideoCapture connection if the stream is
+        not running or has no frame buffered yet.
+
+        Retries up to 3 times with 2-second delays on the fallback path.
 
         Returns:
             JPEG-encoded image bytes.
@@ -277,6 +381,16 @@ class TapoCamera:
         Raises:
             RuntimeError: if all attempts fail.
         """
+        # Fast path: read from the persistent stream buffer.
+        # Intentionally checked outside the camera lock so the RTSPStream's
+        # own lock is sufficient and we don't block other callers while waiting.
+        if self._rtsp_stream is not None:
+            frame = self._rtsp_stream.get_frame()
+            if frame is not None:
+                logger.debug("Frame served from persistent RTSP buffer (%d bytes)", len(frame))
+                return frame
+
+        # Slow path: fall back to a fresh VideoCapture connection.
         with self._lock:
             rtsp_url = self.get_rtsp_url()
             last_error: Optional[Exception] = None
@@ -376,13 +490,23 @@ class TapoCamera:
             # Update tracked position BEFORE sleep so it's always accurate
             self._current_pan = pan_target
             self._current_tilt = tilt_target
-            logger.debug("Waiting %.1f s for camera to stabilise", self.config.SCAN_SETTLE_TIME)
-            time.sleep(self.config.SCAN_SETTLE_TIME)
+            settle = _adaptive_settle(pan_delta, self.config.SCAN_SETTLE_TIME)
+            logger.debug(
+                "Waiting %.1f s for camera to stabilise (delta=%d°)", settle, pan_delta
+            )
+            time.sleep(settle)
 
     def move_to_home(self) -> None:
         """Return camera to the configured home position."""
         logger.info("Moving camera to home position (pan=%d)", self.config.HOME_POSITION)
         self.move_to_angle(self.config.HOME_POSITION, 0)
+
+    def disconnect(self) -> None:
+        """Stop the persistent RTSP stream if running."""
+        if self._rtsp_stream is not None:
+            self._rtsp_stream.stop()
+            self._rtsp_stream = None
+            logger.info("Persistent RTSP stream stopped")
 
     # ------------------------------------------------------------------
     # Full street scan
@@ -397,9 +521,28 @@ class TapoCamera:
         Returns:
             List of dicts: ``{"angle": int, "image": bytes, "position_name": str}``
         """
-        with self._lock:
-            results: List[dict] = []
+        return list(self.scan_street_iter())
 
+    def scan_street_iter(self) -> Generator[dict, None, None]:
+        """
+        Generator that yields one position dict at a time during a street scan.
+
+        The camera always returns to the home position when the generator is
+        exhausted or when the caller breaks out early — the ``try/finally``
+        block guarantees this even if an exception is raised by the caller.
+
+        Yields:
+            Dict with keys ``angle`` (int), ``image`` (bytes), and
+            ``position_name`` (str) for each configured scan position.
+
+        Example — early-exit on first free space::
+
+            for pos in camera.scan_street_iter():
+                result = vision.check_scan_position(pos["image"], pos["position_name"])
+                if result["status"] == "FREE":
+                    break  # camera returns home automatically via finally
+        """
+        with self._lock:
             try:
                 for angle in self.config.SCAN_POSITIONS:
                     position_name = _angle_to_position_name(angle)
@@ -409,13 +552,6 @@ class TapoCamera:
                     try:
                         self.move_to_angle(angle)
                         image_bytes = self.grab_frame()
-                        results.append(
-                            {
-                                "angle": angle,
-                                "image": image_bytes,
-                                "position_name": position_name,
-                            }
-                        )
                         logger.debug(
                             "Captured frame at %s (%d bytes)", position_name, len(image_bytes)
                         )
@@ -426,15 +562,19 @@ class TapoCamera:
                             angle,
                             exc,
                         )
-                        # Continue scanning other positions
+                        continue  # skip this position but keep scanning
+
+                    yield {
+                        "angle": angle,
+                        "image": image_bytes,
+                        "position_name": position_name,
+                    }
 
             finally:
                 try:
                     self.move_to_home()
                 except Exception as exc:
                     logger.error("Failed to return to home position after scan: %s", exc)
-
-            return results
 
     # ------------------------------------------------------------------
     # Convenience

@@ -102,13 +102,18 @@ async def _send_scan_reply(update: Update) -> None:
             await update.message.reply_text("⚠️ No frames captured during scan.")
             return
 
-        free_positions = []
-        summary_lines = []
-
-        for pos in positions:
+        async def _analyse(pos):
             result = await loop.run_in_executor(
                 None, _vision.check_scan_position, pos["image"], pos["position_name"]
             )
+            return pos, result
+
+        analyses = await asyncio.gather(*[_analyse(pos) for pos in positions])
+
+        free_positions = []
+        summary_lines = []
+
+        for pos, result in analyses:
             status = result.get("status", "UNKNOWN")
             confidence = result.get("confidence", "low")
             description = result.get("description", "")

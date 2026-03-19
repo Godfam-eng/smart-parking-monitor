@@ -86,6 +86,13 @@ async def handle_status_text(request: web.Request) -> web.Response:
         text = f"Your parking space is free. {description}"
     elif status == "OCCUPIED":
         text = f"Your parking space is occupied. {description}"
+        # Append cached scan summary if available and the home spot is taken
+        cached = _state.get_scan_cache(_config.SCAN_CACHE_MAX_AGE) if _state and _config else None
+        if cached:
+            scan_summary = cached.get("summary", "")
+            age = cached.get("age_seconds", 0)
+            if scan_summary:
+                text += f" Based on my scan {_format_minutes_ago(age)}: {scan_summary}."
     else:
         text = f"Parking status is unclear. {description}"
     return web.Response(text=text, content_type="text/plain")
@@ -99,12 +106,19 @@ async def handle_status_json(request: web.Request) -> web.Response:
             {"status": "UNKNOWN", "description": "No parking data yet. The monitor is still starting up."},
             status=503,
         )
+    cached = _state.get_scan_cache(_config.SCAN_CACHE_MAX_AGE) if _state and _config else None
     return web.json_response(
         {
             "status": current.get("status", "UNKNOWN"),
             "confidence": current.get("confidence", "low"),
             "description": current.get("description", ""),
             "timestamp": current.get("timestamp", ""),
+            "scan_cache": {
+                "available": cached is not None,
+                "age_seconds": cached["age_seconds"] if cached else None,
+                "summary": cached["summary"] if cached else None,
+                "positions": cached["positions"] if cached else [],
+            },
         }
     )
 
@@ -167,18 +181,20 @@ async def handle_scan_text(request: web.Request) -> web.Response:
                 status=500,
             )
 
-        free_positions = []
-        for pos in positions:
+        async def _analyse_position(pos):
             result = await loop.run_in_executor(
                 None, _vision.check_scan_position, pos["image"], pos["position_name"]
             )
-            if result.get("status") == "FREE":
-                free_positions.append((pos, result))
+            return {**pos, **result}
+
+        analysed = await asyncio.gather(*[_analyse_position(p) for p in positions])
+
+        free_positions = [a for a in analysed if a.get("status") == "FREE"]
 
         if free_positions:
             first = free_positions[0]
-            pos_name = first[0]["position_name"]
-            description = first[1].get("description", "")
+            pos_name = first["position_name"]
+            description = first.get("description", "")
             text = (
                 f"Your spot is taken, but there's a free space {pos_name} on the street. "
                 f"{description}"
@@ -202,22 +218,23 @@ async def handle_scan_json(request: web.Request) -> web.Response:
     try:
         loop = asyncio.get_running_loop()
         positions = await loop.run_in_executor(None, _camera.scan_street)
-        results = []
-        for pos in positions:
+
+        async def _analyse_position(pos):
             result = await loop.run_in_executor(
                 None, _vision.check_scan_position, pos["image"], pos["position_name"]
             )
-            results.append(
-                {
-                    "angle": pos["angle"],
-                    "position_name": pos["position_name"],
-                    "status": result.get("status", "UNKNOWN"),
-                    "confidence": result.get("confidence", "low"),
-                    "description": result.get("description", ""),
-                }
-            )
+            return {
+                "angle": pos["angle"],
+                "position_name": pos["position_name"],
+                "status": result.get("status", "UNKNOWN"),
+                "confidence": result.get("confidence", "low"),
+                "description": result.get("description", ""),
+            }
+
+        results = await asyncio.gather(*[_analyse_position(p) for p in positions])
+
         return web.json_response(
-            {"positions": results, "timestamp": datetime.now(timezone.utc).isoformat()}
+            {"positions": list(results), "timestamp": datetime.now(timezone.utc).isoformat()}
         )
 
     except Exception as exc:
@@ -228,6 +245,31 @@ async def handle_scan_json(request: web.Request) -> web.Response:
 # ------------------------------------------------------------------
 # Voice narrative helpers
 # ------------------------------------------------------------------
+
+def _format_minutes_ago(age_seconds: int) -> str:
+    """Return a human-readable string like '4 minutes ago' or '1 minute ago'."""
+    minutes = age_seconds // 60
+    return f"{minutes} minute{'s' if minutes != 1 else ''} ago"
+
+
+def _build_home_result_from_cache(cached_positions: list) -> dict:
+    """Extract a home-position result dict from a cached scan's position list.
+
+    Looks for the 'center' position entry and returns it in the same format as
+    ``vision.check_home_spot()``.  Falls back to an UNKNOWN result if no center
+    position is present in the cache.
+    """
+    center = next(
+        (p for p in cached_positions if p.get("position_name") == "center"),
+        None,
+    )
+    if center:
+        return {
+            "status": center.get("status", "UNKNOWN"),
+            "confidence": center.get("confidence", "low"),
+            "description": center.get("description", ""),
+        }
+    return {"status": "UNKNOWN", "confidence": "low", "description": ""}
 
 _POSITION_PHRASES = {
     "center":    "your spot directly outside",
@@ -319,33 +361,54 @@ async def handle_scan_voice(request: web.Request) -> web.Response:
     try:
         loop = asyncio.get_running_loop()
 
-        # Step 1: Check home spot first
+        # Step 1: Check if a fresh scan cache is available.
+        cached = _state.get_scan_cache(_config.SCAN_CACHE_MAX_AGE) if _state and _config else None
+        if cached:
+            cached_positions = cached.get("positions", [])
+            cached_summary = cached.get("summary", "")
+            age = cached.get("age_seconds", 0)
+            logger.info("Serving /scan/voice from cache (age=%ds)", age)
+            home_result = _build_home_result_from_cache(cached_positions)
+            narrative = _build_voice_narrative(home_result, cached_positions)
+            suffix = f" (Street data from {_format_minutes_ago(age)}.)"
+            return web.Response(text=narrative + suffix, content_type="text/plain")
+
+        # Step 2: Check home spot first (fast path — skip full scan if home is free)
         image_bytes = await loop.run_in_executor(None, _camera.grab_frame)
         home_result = await loop.run_in_executor(None, _vision.check_home_spot, image_bytes)
 
         home_status = home_result.get("status", "UNKNOWN")
         home_confidence = home_result.get("confidence", "low")
 
-        # Step 2: Short-circuit if home spot is free with sufficient confidence
         if home_status == "FREE" and home_confidence in ("high", "medium"):
             text = "Good news — your spot directly outside is free. Head straight home."
             return web.Response(text=text, content_type="text/plain")
 
-        # Step 3: Full street scan
-        positions = await loop.run_in_executor(None, _camera.scan_street)
-        scan_results = []
-        for pos in positions:
+        # Step 3: Full street scan with early exit on first confident free space.
+        # Capture all frames first using the iterator, then analyse in parallel.
+        positions = []
+        for pos_data in _camera.scan_street_iter():
+            positions.append(pos_data)
+
+        if not positions:
+            return web.Response(
+                text="Sorry, I couldn't scan the street right now.",
+                status=500,
+                content_type="text/plain",
+            )
+
+        async def _analyse_position(pos):
             result = await loop.run_in_executor(
                 None, _vision.check_scan_position, pos["image"], pos["position_name"]
             )
-            scan_results.append(
-                {
-                    "position_name": pos["position_name"],
-                    "status": result.get("status", "UNKNOWN"),
-                    "confidence": result.get("confidence", "low"),
-                    "description": result.get("description", ""),
-                }
-            )
+            return {
+                "position_name": pos["position_name"],
+                "status": result.get("status", "UNKNOWN"),
+                "confidence": result.get("confidence", "low"),
+                "description": result.get("description", ""),
+            }
+
+        scan_results = list(await asyncio.gather(*[_analyse_position(p) for p in positions]))
 
         # Step 4: Build narrative
         narrative = _build_voice_narrative(home_result, scan_results)

@@ -36,6 +36,9 @@ def _make_mocks():
     camera.scan_street.return_value = [
         {"angle": 0, "image": b"\xff\xd8\xff", "position_name": "center"},
     ]
+    camera.scan_street_iter.return_value = iter([
+        {"angle": 0, "image": b"\xff\xd8\xff", "position_name": "center"},
+    ])
 
     vision = MagicMock()
     vision.check_home_spot.return_value = {
@@ -68,6 +71,7 @@ def _make_mocks():
         "timestamp": "2026-01-01 12:00:00",
     }
     state.get_watch_mode.return_value = None
+    state.get_scan_cache.return_value = None
 
     return cfg, camera, vision, state
 

@@ -103,6 +103,16 @@ class ParkingState:
                     chat_id     TEXT    DEFAULT '',
                     active      INTEGER DEFAULT 1
                 );
+
+                CREATE TABLE IF NOT EXISTS scan_cache (
+                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp   TEXT    DEFAULT CURRENT_TIMESTAMP,
+                    positions   TEXT    NOT NULL,
+                    summary     TEXT    DEFAULT ''
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_scan_cache_timestamp
+                    ON scan_cache (timestamp);
                 """
             )
 
@@ -528,6 +538,61 @@ class ParkingState:
         return self.get_watch_mode() is not None
 
     # ------------------------------------------------------------------
+    # Scan cache
+    # ------------------------------------------------------------------
+
+    def save_scan_cache(self, positions: list, summary: str = "") -> None:
+        """Save a full scan result to the cache.
+
+        Args:
+            positions: List of position result dicts from the street scan.
+            summary:   Human-readable summary string (e.g. "Free spaces found: left").
+        """
+        with self._lock:
+            with self._conn:
+                self._conn.execute(
+                    "INSERT INTO scan_cache (positions, summary) VALUES (?, ?)",
+                    (json.dumps(positions), summary),
+                )
+        logger.debug("Saved scan cache with %d positions", len(positions))
+
+    def get_scan_cache(self, max_age_seconds: int = 600) -> Optional[dict]:
+        """Return the most recent scan cache entry if younger than *max_age_seconds*.
+
+        Args:
+            max_age_seconds: Maximum cache age before it is considered stale.
+
+        Returns:
+            Dict with keys ``id``, ``timestamp``, ``positions`` (list),
+            ``summary`` (str), and ``age_seconds`` (int), or ``None`` if no
+            fresh cache exists.
+        """
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM scan_cache ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+        if row is None:
+            return None
+        data = dict(row)
+        try:
+            ts = datetime.strptime(data["timestamp"], "%Y-%m-%d %H:%M:%S")
+            age = (datetime.now() - ts).total_seconds()
+            if age > max_age_seconds:
+                return None
+            data["positions"] = json.loads(data.get("positions", "[]"))
+            data["age_seconds"] = int(age)
+            return data
+        except (ValueError, json.JSONDecodeError):
+            return None
+
+    def clear_scan_cache(self) -> None:
+        """Delete all scan cache entries."""
+        with self._lock:
+            with self._conn:
+                self._conn.execute("DELETE FROM scan_cache")
+        logger.debug("Scan cache cleared")
+
+    # ------------------------------------------------------------------
     # Maintenance
     # ------------------------------------------------------------------
 
@@ -552,6 +617,10 @@ class ParkingState:
                 deleted += cur.rowcount
                 cur = self._conn.execute(
                     "DELETE FROM state_changes WHERE timestamp < ?", (cutoff,)
+                )
+                deleted += cur.rowcount
+                cur = self._conn.execute(
+                    "DELETE FROM scan_cache WHERE timestamp < ?", (cutoff,)
                 )
                 deleted += cur.rowcount
 
