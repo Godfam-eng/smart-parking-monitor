@@ -136,3 +136,62 @@ You can automate the parking check with Shortcuts automations:
 4. Enable "Run Immediately" (skips the confirmation)
 
 Now whenever you arrive home, Siri automatically checks if your space is free.
+
+---
+
+## Using Without Tailscale VPN (Tailscale Funnel)
+
+By default, these shortcuts only work when Tailscale VPN is active on your iPhone. With **Tailscale Funnel**, you get a public HTTPS URL that works on any network — no VPN needed.
+
+See **[docs/TAILSCALE_FUNNEL.md](TAILSCALE_FUNNEL.md)** for full setup instructions.
+
+Once configured, your shortcut URLs change from:
+```
+http://100.x.y.z:8080/status
+```
+to:
+```
+https://parking-pi.tail1234.ts.net/status?key=YOUR_API_KEY
+```
+
+The `?key=` query parameter replaces the `X-API-Key` header — Siri Shortcuts cannot set custom headers, but the query parameter works just as well over HTTPS.
+
+---
+
+## Conversational Voice Scan (`/scan/voice`)
+
+For a natural, Siri-friendly street scan, use the `/scan/voice` endpoint instead of `/scan`.
+
+This endpoint:
+- First checks your home spot
+- Short-circuits with "Good news — your spot is free. Head straight home." if it is free
+- Otherwise performs a full street scan and returns a conversational narrative
+
+**Example Siri Shortcut URL:**
+```
+http://100.x.y.z:8080/scan/voice
+```
+or with Funnel:
+```
+https://parking-pi.tail1234.ts.net/scan/voice?key=YOUR_API_KEY
+```
+
+**Example spoken responses:**
+
+When your spot is free:
+> *"Good news — your spot directly outside is free. Head straight home."*
+
+When looking around:
+> *"Checking your street now. Your spot directly outside is taken. Looking one or two cars to the left — that's taken. Looking further along on the left — there's a space there. Closest free space is further along on the left. I'd head there."*
+
+When everything is full:
+> *"Checking your street now. Your spot directly outside is taken. Looking one or two cars to the left — that's taken. Looking further along on the left — that's taken. Looking one or two cars to the right — that's taken. Looking further along on the right — that's taken. I've looked one or two cars to the left, further along on the left, one or two cars to the right, and further along on the right — the whole street looks full right now. Try again in a few minutes."*
+
+### Creating a Voice Scan Shortcut
+
+1. Create a new Shortcut
+2. Add **Get Contents of URL**
+   - URL: `http://100.x.y.z:8080/scan/voice`
+   - Tap **Show More** → set **Timeout** to **90 seconds**
+3. Add **Speak Text** → select **Contents of URL**
+4. Name it **"Street scan"** and add to Siri: **"Find me a parking space"**

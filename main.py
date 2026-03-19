@@ -80,9 +80,14 @@ def _run_monitoring_loop(
     )
 
     last_cleanup = datetime.now(timezone.utc)
+    _last_watch_update = time.monotonic()
 
     while not _shutdown_event.is_set():
         loop_start = time.monotonic()
+
+        # Check watch mode at the start of each iteration
+        watch = state.get_watch_mode()
+        is_watching = watch is not None
 
         try:
             # 1. Ensure camera is at home position before grabbing frame
@@ -118,6 +123,26 @@ def _run_monitoring_loop(
                         notifications.notify_space_occupied(description, image_bytes)
                     state.record_state_change(previous, status, description)
 
+            # 7. Watch mode: proactive updates for /leaving mode
+            if is_watching and watch["mode"] == "leaving":
+                now = time.monotonic()
+                if now - _last_watch_update >= config.LEAVING_UPDATE_INTERVAL:
+                    _last_watch_update = now
+                    if status == "FREE":
+                        notifications.send_telegram(
+                            message=f"🅿️ SPACE FREE! Get here now.\n{description}"
+                        )
+                    else:
+                        expires_at = datetime.fromisoformat(watch["expires_at"])
+                        remaining = expires_at - datetime.now(timezone.utc)
+                        mins = max(0, int(remaining.total_seconds() / 60))
+                        notifications.send_telegram(
+                            message=(
+                                f"⏱ Still watching — street still looks full.\n"
+                                f"{mins} minutes remaining before auto-cancel."
+                            )
+                        )
+
         except Exception as exc:
             logger.error("Error in monitoring loop iteration: %s", exc, exc_info=True)
             try:
@@ -133,9 +158,17 @@ def _run_monitoring_loop(
             except Exception as exc:
                 logger.warning("Cleanup failed: %s", exc)
 
-        # Sleep for the remainder of the interval
+        # Determine sleep time based on watch mode
+        if is_watching:
+            if watch["mode"] == "watch":
+                check_interval = config.WATCH_CHECK_INTERVAL
+            else:
+                check_interval = config.LEAVING_CHECK_INTERVAL
+        else:
+            check_interval = config.CHECK_INTERVAL
+
         elapsed = time.monotonic() - loop_start
-        sleep_time = max(0.0, config.CHECK_INTERVAL - elapsed)
+        sleep_time = max(0.0, check_interval - elapsed)
         logger.debug("Sleeping %.1f s until next check", sleep_time)
         _shutdown_event.wait(timeout=sleep_time)
 

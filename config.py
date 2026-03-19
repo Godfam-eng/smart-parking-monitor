@@ -106,6 +106,20 @@ class Config:
     SAFE_PAN_MIN: int = -180   # leftmost useful angle (from calibration)
     SAFE_PAN_MAX: int = 180    # rightmost useful angle (from calibration)
 
+    # --- Public URL (Tailscale Funnel, optional) ---
+    # Set to your Tailscale Funnel URL for public HTTPS access without VPN.
+    # Example: https://parking-pi.your-tailnet.ts.net
+    # Leave blank to use only Tailscale VPN or local network access.
+    PUBLIC_URL: str = ""
+
+    # --- Watch Mode ---
+    WATCH_CHECK_INTERVAL: int = 60        # Check interval during /watch (seconds)
+    LEAVING_CHECK_INTERVAL: int = 90      # Check interval during /leaving (seconds)
+    WATCH_TIMEOUT_HOURS: int = 2          # Auto-cancel timeout for /watch
+    LEAVING_GRACE_MINUTES: int = 30       # Extra time after ETA expires before auto-cancel
+    LEAVING_DEFAULT_MINUTES: int = 30     # Default ETA when /leaving is used without argument
+    LEAVING_UPDATE_INTERVAL: int = 600    # Interval (seconds) for proactive /leaving updates
+
 
 def _parse_scan_positions(raw: str) -> List[int]:
     """Parse a comma-separated string of pan angles into a list of ints."""
@@ -191,6 +205,13 @@ def load_config() -> Config:
         ),
         SAFE_PAN_MIN=_safe_int("SAFE_PAN_MIN", os.getenv("SAFE_PAN_MIN", "-180"), -180),
         SAFE_PAN_MAX=_safe_int("SAFE_PAN_MAX", os.getenv("SAFE_PAN_MAX", "180"), 180),
+        PUBLIC_URL=os.getenv("PUBLIC_URL", ""),
+        WATCH_CHECK_INTERVAL=_safe_int("WATCH_CHECK_INTERVAL", os.getenv("WATCH_CHECK_INTERVAL", "60"), 60),
+        LEAVING_CHECK_INTERVAL=_safe_int("LEAVING_CHECK_INTERVAL", os.getenv("LEAVING_CHECK_INTERVAL", "90"), 90),
+        WATCH_TIMEOUT_HOURS=_safe_int("WATCH_TIMEOUT_HOURS", os.getenv("WATCH_TIMEOUT_HOURS", "2"), 2),
+        LEAVING_GRACE_MINUTES=_safe_int("LEAVING_GRACE_MINUTES", os.getenv("LEAVING_GRACE_MINUTES", "30"), 30),
+        LEAVING_DEFAULT_MINUTES=_safe_int("LEAVING_DEFAULT_MINUTES", os.getenv("LEAVING_DEFAULT_MINUTES", "30"), 30),
+        LEAVING_UPDATE_INTERVAL=_safe_int("LEAVING_UPDATE_INTERVAL", os.getenv("LEAVING_UPDATE_INTERVAL", "600"), 600),
     )
 
 

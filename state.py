@@ -93,6 +93,16 @@ class ParkingState:
 
                 CREATE INDEX IF NOT EXISTS idx_state_changes_timestamp
                     ON state_changes (timestamp);
+
+                CREATE TABLE IF NOT EXISTS watch_mode (
+                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    mode        TEXT    NOT NULL,
+                    eta_minutes INTEGER DEFAULT 0,
+                    started_at  TEXT    NOT NULL,
+                    expires_at  TEXT    NOT NULL,
+                    chat_id     TEXT    DEFAULT '',
+                    active      INTEGER DEFAULT 1
+                );
                 """
             )
 
@@ -475,6 +485,47 @@ class ParkingState:
                 d["obstructions"] = []
             result.append(d)
         return result
+
+    # ------------------------------------------------------------------
+    # Watch mode
+    # ------------------------------------------------------------------
+
+    def set_watch_mode(self, mode: str, eta_minutes: int, expires_at: str, chat_id: str = "") -> None:
+        """Activate watch or leaving mode. Deactivates any existing mode first."""
+        with self._lock:
+            with self._conn:
+                self._conn.execute("UPDATE watch_mode SET active = 0 WHERE active = 1")
+                self._conn.execute(
+                    "INSERT INTO watch_mode (mode, eta_minutes, started_at, expires_at, chat_id, active)"
+                    " VALUES (?, ?, ?, ?, ?, 1)",
+                    (mode, eta_minutes, datetime.now(timezone.utc).isoformat(), expires_at, chat_id),
+                )
+
+    def get_watch_mode(self) -> Optional[dict]:
+        """Return the active watch mode as a dict, or None if none active."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM watch_mode WHERE active = 1 ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+            if row is None:
+                return None
+            result = dict(row)
+        # Auto-expire if past expires_at
+        expires_at = datetime.fromisoformat(result["expires_at"])
+        if datetime.now(timezone.utc) >= expires_at:
+            self.clear_watch_mode()
+            return None
+        return result
+
+    def clear_watch_mode(self) -> None:
+        """Deactivate all watch modes."""
+        with self._lock:
+            with self._conn:
+                self._conn.execute("UPDATE watch_mode SET active = 0 WHERE active = 1")
+
+    def is_watch_active(self) -> bool:
+        """Return True if a watch or leaving mode is currently active and not expired."""
+        return self.get_watch_mode() is not None
 
     # ------------------------------------------------------------------
     # Maintenance

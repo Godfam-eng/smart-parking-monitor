@@ -358,3 +358,58 @@ class TestSafePanBoundsConfig:
         monkeypatch.setenv("SAFE_PAN_MAX", "not_a_number")
         cfg = load_config()
         assert cfg.SAFE_PAN_MAX == 180
+
+
+class TestPublicUrlConfig:
+    def test_public_url_defaults_to_empty(self, monkeypatch):
+        monkeypatch.delenv("PUBLIC_URL", raising=False)
+        cfg = load_config()
+        assert cfg.PUBLIC_URL == ""
+
+    def test_public_url_from_env(self, monkeypatch):
+        monkeypatch.setenv("PUBLIC_URL", "https://parking-pi.tail1234.ts.net")
+        cfg = load_config()
+        assert cfg.PUBLIC_URL == "https://parking-pi.tail1234.ts.net"
+
+
+class TestWatchModeConfig:
+    def test_watch_mode_defaults(self, monkeypatch):
+        for key in ("WATCH_CHECK_INTERVAL", "LEAVING_CHECK_INTERVAL",
+                    "WATCH_TIMEOUT_HOURS", "LEAVING_GRACE_MINUTES", "LEAVING_DEFAULT_MINUTES"):
+            monkeypatch.delenv(key, raising=False)
+        cfg = load_config()
+        assert cfg.WATCH_CHECK_INTERVAL == 60
+        assert cfg.LEAVING_CHECK_INTERVAL == 90
+        assert cfg.WATCH_TIMEOUT_HOURS == 2
+        assert cfg.LEAVING_GRACE_MINUTES == 30
+        assert cfg.LEAVING_DEFAULT_MINUTES == 30
+
+    def test_watch_check_interval_from_env(self, monkeypatch):
+        monkeypatch.setenv("WATCH_CHECK_INTERVAL", "45")
+        cfg = load_config()
+        assert cfg.WATCH_CHECK_INTERVAL == 45
+
+    def test_leaving_check_interval_from_env(self, monkeypatch):
+        monkeypatch.setenv("LEAVING_CHECK_INTERVAL", "120")
+        cfg = load_config()
+        assert cfg.LEAVING_CHECK_INTERVAL == 120
+
+    def test_watch_timeout_hours_from_env(self, monkeypatch):
+        monkeypatch.setenv("WATCH_TIMEOUT_HOURS", "4")
+        cfg = load_config()
+        assert cfg.WATCH_TIMEOUT_HOURS == 4
+
+    def test_leaving_grace_minutes_from_env(self, monkeypatch):
+        monkeypatch.setenv("LEAVING_GRACE_MINUTES", "15")
+        cfg = load_config()
+        assert cfg.LEAVING_GRACE_MINUTES == 15
+
+    def test_leaving_default_minutes_from_env(self, monkeypatch):
+        monkeypatch.setenv("LEAVING_DEFAULT_MINUTES", "20")
+        cfg = load_config()
+        assert cfg.LEAVING_DEFAULT_MINUTES == 20
+
+    def test_watch_interval_invalid_falls_back_to_default(self, monkeypatch):
+        monkeypatch.setenv("WATCH_CHECK_INTERVAL", "not_a_number")
+        cfg = load_config()
+        assert cfg.WATCH_CHECK_INTERVAL == 60

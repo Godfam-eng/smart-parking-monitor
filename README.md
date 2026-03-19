@@ -50,13 +50,14 @@ Smart Parking Monitor watches your UK terraced street 24/7 through a window-moun
 
 - ✅ **AI vision analysis** — Claude interprets camera frames to detect free/occupied spaces
 - ✅ **Smart notifications** — Pushover (iPhone/Watch) + Telegram, respects quiet hours
-- ✅ **Siri integration** — "Hey Siri, is parking free?" returns a spoken answer
+- ✅ **Siri integration** — "Hey Siri, is parking free?" returns a spoken answer; `/scan/voice` returns a conversational narrative
 - ✅ **Telegram bot** — Full command set plus natural language understanding
 - ✅ **Full street scan** — Pan camera across the entire street to find the nearest free space
+- ✅ **Watchdog / commute mode** — `/watch` and `/leaving` commands monitor continuously and alert the moment a space appears
 - ✅ **SQLite statistics** — Track parking patterns, busiest hours, free percentage
 - ✅ **HTTP REST API** — Full JSON API plus plain-text Siri-compatible responses
 - ✅ **PWA Dashboard** — Mobile-first web interface at `/dashboard`; installable on iPhone/Android home screen
-- ✅ **Tailscale remote access** — Secure access from anywhere via VPN
+- ✅ **Tailscale remote access** — Secure access from anywhere via VPN or public HTTPS via Tailscale Funnel
 - ✅ **systemd service** — Auto-start on boot, automatic restart on failure
 - ✅ **Smart auto-calibration** — Claude AI scores each angle on first boot and selects optimal scan positions automatically
 - ✅ **Window glass handling** — Prompts instruct Claude to ignore reflections and glare
@@ -175,6 +176,13 @@ python calibrate.py   # AI-assisted if ANTHROPIC_API_KEY is set, image-only othe
 | `CALIBRATION_MIN_USEFULNESS` | `6` | Minimum Claude score (0–10) to include an angle in scan positions |
 | `SAFE_PAN_MIN` | `-180` | Leftmost useful pan angle (auto-set by calibration; override to restrict further) |
 | `SAFE_PAN_MAX` | `180` | Rightmost useful pan angle (auto-set by calibration; override to restrict further) |
+| `PUBLIC_URL` | — | Tailscale Funnel URL for public HTTPS access (optional; e.g. `https://parking-pi.tail1234.ts.net`) |
+| `WATCH_CHECK_INTERVAL` | `60` | Check interval (seconds) during `/watch` mode |
+| `LEAVING_CHECK_INTERVAL` | `90` | Check interval (seconds) during `/leaving` mode |
+| `WATCH_TIMEOUT_HOURS` | `2` | Auto-cancel timeout for `/watch` mode (hours) |
+| `LEAVING_GRACE_MINUTES` | `30` | Extra minutes after ETA expires before `/leaving` auto-cancels |
+| `LEAVING_DEFAULT_MINUTES` | `30` | Default ETA when `/leaving` is used without an argument |
+| `LEAVING_UPDATE_INTERVAL` | `600` | Interval (seconds) between proactive status updates in `/leaving` mode |
 
 ---
 
@@ -200,6 +208,9 @@ See [docs/SIRI_SHORTCUT_GUIDE.md](docs/SIRI_SHORTCUT_GUIDE.md) for full instruct
 | `/stats` | View parking statistics |
 | `/calibrate` | Run auto-calibration sweep (AI scores all 13 angles) |
 | `/positions` | Show current calibrated scan positions and home position |
+| `/watch` | Passive watchdog — alert when space appears (2hr timeout) |
+| `/leaving 20` | Commute mode — ETA 20 min, check every 90s |
+| `/unwatch` | Cancel watch/commute mode |
 | `/help` | Show help message |
 
 You can also send natural language messages:
@@ -209,6 +220,9 @@ You can also send natural language messages:
 - "Show me the stats" → statistics
 - "Calibrate" → trigger calibration
 - "Positions" or "angles" → show current positions
+- "I'm leaving now" → commute mode (default 30min ETA)
+- "Watch for me" → watch mode
+- "Stop watching" → cancel watch mode
 
 ### HTTP API
 
@@ -220,9 +234,10 @@ You can also send natural language messages:
 | `GET /status/live/json` | JSON | Fresh Claude call, full JSON |
 | `GET /scan` | Plain text | Siri-friendly scan result |
 | `GET /scan/json` | JSON | Full scan results array |
+| `GET /scan/voice` | Plain text | Conversational scan narrative for Siri |
 | `GET /snapshot` | JPEG | Current camera frame |
 | `GET /stats` | JSON | Database statistics |
-| `GET /health` | JSON | System health check |
+| `GET /health` | JSON | System health check (includes watch mode status) |
 | `GET /calibration` | JSON | Current calibration data |
 | `POST /calibrate` | JSON | Trigger auto-calibration sweep |
 
