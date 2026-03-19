@@ -99,6 +99,13 @@ class Config:
     )
     CALIBRATION_MIN_USEFULNESS: int = 6        # Minimum usefulness score to include in scan positions
 
+    # --- Safe Pan Bounds (auto-derived from calibration or manually set) ---
+    # These constrain all camera movement to the angular range where the
+    # street is visible through the window.  Leave at defaults (±180) and
+    # auto-calibration will narrow them automatically.
+    SAFE_PAN_MIN: int = -180   # leftmost useful angle (from calibration)
+    SAFE_PAN_MAX: int = 180    # rightmost useful angle (from calibration)
+
 
 def _parse_scan_positions(raw: str) -> List[int]:
     """Parse a comma-separated string of pan angles into a list of ints."""
@@ -182,6 +189,8 @@ def load_config() -> Config:
         CALIBRATION_MIN_USEFULNESS=_safe_int(
             "CALIBRATION_MIN_USEFULNESS", os.getenv("CALIBRATION_MIN_USEFULNESS", "6"), 6
         ),
+        SAFE_PAN_MIN=_safe_int("SAFE_PAN_MIN", os.getenv("SAFE_PAN_MIN", "-180"), -180),
+        SAFE_PAN_MAX=_safe_int("SAFE_PAN_MAX", os.getenv("SAFE_PAN_MAX", "180"), 180),
     )
 
 

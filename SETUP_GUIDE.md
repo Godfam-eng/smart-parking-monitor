@@ -486,6 +486,25 @@ The camera uses **relative** movement internally.  `connect()` drives it to the 
 3. If auto-calibration is selecting poor angles, adjust `CALIBRATION_MIN_USEFULNESS` in `.env`
 4. Ensure nothing physically obstructs the camera at start-up (it will try to pan fully left)
 
+### Camera captures blinds/wall/ceiling instead of the street
+
+The camera's safe pan bounds may not be set correctly.  After calibration, the system
+automatically restricts all camera movement to angles where the street is actually visible.
+If you see blinds or walls in the captured images:
+
+1. **Run auto-calibration** — send `/calibrate` via Telegram, or run `python calibrate.py`
+2. Calibration will automatically determine which angles see the street and set safe bounds
+3. Check the Telegram summary — it now shows `🔧 Safe pan bounds: [X°, +Y°]`
+4. If calibration is correct but images are still wrong, you can manually set safe bounds in `.env`:
+
+```bash
+SAFE_PAN_MIN=-60
+SAFE_PAN_MAX=60
+```
+
+For example, if you know your window only shows the street between −60° and +60°, set those values.
+The system will clamp all camera movement (including scans) to that range.
+
 ### Service fails to start (`code=exited, status=200/CHDIR`)
 
 Your username is not `pi`.  Edit the service file and replace all four occurrences of `pi` with your actual username:

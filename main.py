@@ -85,10 +85,13 @@ def _run_monitoring_loop(
         loop_start = time.monotonic()
 
         try:
-            # 1. Grab frame
+            # 1. Ensure camera is at home position before grabbing frame
+            camera.move_to_home()
+
+            # 2. Grab frame
             image_bytes = camera.grab_frame()
 
-            # 2. Analyse
+            # 3. Analyse
             result = vision.check_home_spot(image_bytes)
             status = result.get("status", "UNKNOWN")
             confidence = result.get("confidence", "low")
@@ -98,13 +101,13 @@ def _run_monitoring_loop(
                 "Check: status=%s confidence=%s — %s", status, confidence, description
             )
 
-            # 3. Save previous status BEFORE recording the current check
+            # 4. Save previous status BEFORE recording the current check
             previous = state.get_previous_status()
 
-            # 4. Record the current check first
+            # 5. Record the current check first
             state.record_check(status, confidence, description, angle=config.HOME_POSITION)
 
-            # 5. Notify if state changed and confidence threshold met.
+            # 6. Notify if state changed and confidence threshold met.
             #    Skip on the very first run (previous is None) to avoid a spurious alert.
             if status != "UNKNOWN" and _meets_threshold(confidence, config.CONFIDENCE_THRESHOLD):
                 if previous is not None and previous != status:
@@ -204,11 +207,24 @@ def main() -> None:
             if cal_data:
                 config.HOME_POSITION = cal_data.home_position
                 config.SCAN_POSITIONS = cal_data.scan_positions
+                # Apply safe pan bounds from calibration
+                safe_min = getattr(cal_data, 'safe_pan_min', config.SAFE_PAN_MIN)
+                safe_max = getattr(cal_data, 'safe_pan_max', config.SAFE_PAN_MAX)
+                camera.set_safe_pan_bounds(safe_min, safe_max)
                 logger.info(
-                    "Loaded calibration: home=%d, positions=%s",
+                    "Loaded calibration: home=%d, positions=%s, safe_pan=[%d°, %d°]",
                     cal_data.home_position,
                     cal_data.scan_positions,
+                    safe_min,
+                    safe_max,
                 )
+
+    # 4a. Move camera to home position before monitoring begins.
+    try:
+        camera.move_to_home()
+        logger.info("Camera moved to home position (pan=%d)", config.HOME_POSITION)
+    except Exception as exc:
+        logger.warning("Failed to move camera to home position: %s", exc)
 
     # 5. Start Telegram bot in a daemon thread
     if not args.skip_bot and config.TELEGRAM_BOT_TOKEN:

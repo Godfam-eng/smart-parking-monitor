@@ -163,6 +163,8 @@ class TestCalibrationMethods:
             parking_side = "near"
             opposite_restriction = "double_yellow"
             street_description = "Clear view of street."
+            safe_pan_min = -45
+            safe_pan_max = 45
             angle_scores = [
                 {
                     "angle": -30,
@@ -196,6 +198,8 @@ class TestCalibrationMethods:
         assert cal["scan_positions"] == [-30, 0, 30]
         assert cal["parking_side"] == "near"
         assert cal["opposite_restriction"] == "double_yellow"
+        assert cal["safe_pan_min"] == -45
+        assert cal["safe_pan_max"] == 45
 
     def test_get_calibration_angles(self, db):
         class MockResult:
@@ -205,6 +209,8 @@ class TestCalibrationMethods:
             parking_side = "near"
             opposite_restriction = "double_yellow"
             street_description = "Test."
+            safe_pan_min = -180
+            safe_pan_max = 180
             angle_scores = [
                 {
                     "angle": -15,
@@ -236,3 +242,29 @@ class TestCalibrationMethods:
         assert angles[1]["angle"] == 0
         assert angles[1]["home_spot"] == 1
         assert isinstance(angles[0]["obstructions"], list)
+
+    def test_get_latest_calibration_returns_default_safe_bounds_when_null(self, db):
+        """Rows with NULL safe_pan_min/max (from before migration) should default to ±180."""
+        class MockResult:
+            timestamp = "2024-01-01 12:00:00"
+            home_position = 0
+            scan_positions = [0]
+            parking_side = "near"
+            opposite_restriction = "double_yellow"
+            street_description = "Test."
+            safe_pan_min = -180
+            safe_pan_max = 180
+            angle_scores = []
+
+        cal_id = db.save_calibration(MockResult())
+        # Manually NULL the safe bounds to simulate a pre-migration row
+        db._conn.execute(
+            "UPDATE calibrations SET safe_pan_min = NULL, safe_pan_max = NULL WHERE id = ?",
+            (cal_id,),
+        )
+        db._conn.commit()
+
+        cal = db.get_latest_calibration()
+        assert cal is not None
+        assert cal["safe_pan_min"] == -180
+        assert cal["safe_pan_max"] == 180

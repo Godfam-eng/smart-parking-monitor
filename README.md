@@ -173,6 +173,8 @@ python calibrate.py   # AI-assisted if ANTHROPIC_API_KEY is set, image-only othe
 | `AUTO_CALIBRATE` | `true` | Run auto-calibration on first boot |
 | `CALIBRATION_INTERVAL_DAYS` | `30` | Re-calibrate every N days (0 = only on first boot) |
 | `CALIBRATION_MIN_USEFULNESS` | `6` | Minimum Claude score (0–10) to include an angle in scan positions |
+| `SAFE_PAN_MIN` | `-180` | Leftmost useful pan angle (auto-set by calibration; override to restrict further) |
+| `SAFE_PAN_MAX` | `180` | Rightmost useful pan angle (auto-set by calibration; override to restrict further) |
 
 ---
 
