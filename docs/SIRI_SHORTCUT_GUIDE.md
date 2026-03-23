@@ -4,6 +4,43 @@ Control your parking monitor with your voice: "Hey Siri, is parking free?"
 
 ---
 
+## Which URL to use in your Siri Shortcut
+
+| Where you are | URL format | Requires |
+|---|---|---|
+| Home WiFi only | `http://192.168.x.x:8080/status` | Same network |
+| VPN (Tailscale on) | `http://100.x.x.x:8080/status` | Tailscale app active |
+| **Anywhere (recommended)** | `https://parking-pi.ts.net/status?key=YOUR_KEY` | Tailscale Funnel |
+
+**Always use the HTTPS Funnel URL** — it works on WiFi, 4G, and anywhere else without needing the Tailscale app running on your phone.
+
+### Why it fails on 4G with http://
+
+iOS enforces App Transport Security (ATS) on cellular connections. Any request to a non-local address using `http://` is **silently blocked** by iOS. You'll see errors like:
+- "The request was not allowed by ATS"
+- "Could not connect to the server"
+- "An SSL error has occurred"
+
+The fix is simple: change `http://` to `https://` and use your Tailscale Funnel hostname.
+
+### Setting up your Shortcut for 4G
+
+1. Make sure Tailscale Funnel is running on your Pi:
+   ```bash
+   tailscale funnel --bg 8080
+   ```
+2. Get your Funnel hostname:
+   ```bash
+   tailscale funnel status
+   ```
+3. In Shortcuts app, change the URL to:
+   ```
+   https://YOUR-PI-HOSTNAME.ts.net/status?key=YOUR_API_KEY
+   ```
+4. Test: Turn off WiFi AND Tailscale on your phone, then run the shortcut
+
+---
+
 ## Prerequisites
 
 1. **Tailscale installed** on both your iPhone and Raspberry Pi

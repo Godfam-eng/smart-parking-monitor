@@ -8,6 +8,7 @@ import base64
 import json
 import logging
 import re
+from typing import Optional
 
 import anthropic
 
@@ -45,20 +46,25 @@ class ParkingVision:
     # Public analysis methods
     # ------------------------------------------------------------------
 
-    def check_home_spot(self, image_bytes: bytes) -> dict:
+    def check_home_spot(self, image_bytes: bytes, use_fast_model: bool = False) -> dict:
         """
         Analyse an image for the home parking spot status.
 
         Args:
-            image_bytes: JPEG image data.
+            image_bytes:    JPEG image data (ideally pre-processed via
+                            camera.prepare_for_vision()).
+            use_fast_model: If True, use CLAUDE_MODEL_FAST (Haiku) instead of
+                            CLAUDE_MODEL (Sonnet).  Use True for background
+                            monitoring; False (default) for on-demand requests.
 
         Returns:
             Dict with keys: status ("FREE"/"OCCUPIED"/"UNKNOWN"),
             confidence ("high"/"medium"/"low"), description (str).
         """
         prompt = self._build_home_prompt()
+        model = self.config.CLAUDE_MODEL_FAST if use_fast_model else self.config.CLAUDE_MODEL
         try:
-            raw_text = self._send_to_claude(image_bytes, prompt)
+            raw_text = self._send_to_claude(image_bytes, prompt, model=model)
             result = self._parse_response(raw_text)
             logger.info(
                 "Home spot check: status=%s confidence=%s — %s",
@@ -383,21 +389,24 @@ class ParkingVision:
     # Claude API call
     # ------------------------------------------------------------------
 
-    def _send_to_claude(self, image_bytes: bytes, prompt: str) -> str:
+    def _send_to_claude(self, image_bytes: bytes, prompt: str, model: Optional[str] = None) -> str:
         """
         Send an image and prompt to Claude, returning the response text.
 
         Args:
             image_bytes: Raw JPEG image data.
             prompt: Text prompt for Claude.
+            model: Override the model for this call.  Defaults to CLAUDE_MODEL.
 
         Returns:
             Claude's response as a string.
         """
         b64_image = base64.standard_b64encode(image_bytes).decode("utf-8")
 
+        use_model = model if model is not None else self.config.CLAUDE_MODEL
+
         message = self.client.messages.create(
-            model=self.config.CLAUDE_MODEL,
+            model=use_model,
             max_tokens=self.config.CLAUDE_MAX_TOKENS,
             messages=[
                 {

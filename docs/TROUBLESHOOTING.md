@@ -135,15 +135,39 @@ Claude occasionally times out under heavy load. The system will retry on the nex
 
 ## High Claude API Costs
 
-Claude charges per token. With a 180-second interval:
-- ~480 requests/day
-- ~1000 tokens per request (input image + response)
-- ~$0.10–0.30/day depending on model
+With a 180-second interval and no cost controls, the API can cost £5–£10/day. The system now includes several cost-reduction features that are enabled by default.
 
-To reduce costs:
-1. Increase `CHECK_INTERVAL` to 300 or 600 seconds
-2. Consider `claude-haiku-*` model (much cheaper, slightly less accurate)
-3. Only trigger checks when motion is detected (future feature)
+**Quick checks:**
+1. Is `CHECK_INTERVAL` set to a sensible value? 600 seconds (10 min) is the new default — 180 s was the old default and caused high spend.
+2. Is `MOTION_GATE_ENABLED=true`? This skips Claude when the camera view hasn't changed (most cycles when a car is parked or the street is consistently occupied).
+3. Is `CLAUDE_MODEL_FAST` set? Background checks now use `claude-haiku-3-5-20241022` (~15× cheaper than Sonnet).
+4. Is `VISION_RESIZE_WIDTH=640` and `VISION_RESIZE_HEIGHT=480`? Full 2K images cost ~4,900 image tokens; 640×480 costs ~180 tokens.
+
+**Cost estimate with default settings:**
+- `CHECK_INTERVAL=600`: ~144 checks/day
+- Motion gate skips ~80–90% when parked: ~15–30 Claude calls/day
+- Haiku + small images: ~$0.002/day
+
+See the `# --- Cost Reduction (Claude API) ---` section in `.env.example` for all options.
+
+---
+
+## Siri Shortcut Works on WiFi But Fails on 4G
+
+iOS App Transport Security (ATS) blocks `http://` requests to non-local addresses on cellular data. The fix is to use HTTPS via Tailscale Funnel.
+
+**Symptoms:**
+- "The request was not allowed by ATS"
+- "Could not connect to the server"
+- Works perfectly on home WiFi, fails as soon as you leave
+
+**Fix:** Switch your Siri Shortcut URL from `http://` to `https://` using Tailscale Funnel:
+
+```
+https://YOUR-PI-HOSTNAME.ts.net/status?key=YOUR_API_KEY
+```
+
+See **[docs/TAILSCALE_FUNNEL.md](TAILSCALE_FUNNEL.md)** for full setup instructions, including the "WiFi works but 4G fails" section.
 
 ---
 

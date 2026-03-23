@@ -29,16 +29,11 @@ Tailscale Funnel routes HTTPS traffic from a public URL (e.g. `https://parking-p
 On your Raspberry Pi, run:
 
 ```bash
-tailscale funnel 8080
-```
-
-This exposes port 8080 on your Pi as a public HTTPS endpoint.
-
-To make it persistent across reboots:
-
-```bash
+# Makes Funnel persistent — survives reboots and SSH disconnects
 tailscale funnel --bg 8080
 ```
+
+This exposes port 8080 on your Pi as a public HTTPS endpoint and persists across reboots.
 
 ### 2. Get Your Public URL
 
@@ -146,6 +141,37 @@ Your Pi reverts to Tailscale VPN-only access.
 ---
 
 ## Troubleshooting
+
+### WiFi works but 4G fails
+
+This is a very common issue with three possible causes:
+
+#### Cause 1: Shortcut URL uses http:// not https://
+
+iOS blocks `http://` on cellular (App Transport Security). Open Shortcuts and check your URL:
+- ❌ `http://parking-pi.tail1234.ts.net/status`
+- ❌ `http://100.94.12.33:8080/status`
+- ✅ `https://parking-pi.tail1234.ts.net/status?key=YOUR_KEY`
+
+#### Cause 2: Shortcut uses a local/Tailscale IP address
+
+`192.168.x.x` only works on home WiFi. `100.x.x.x` only works with Tailscale VPN active on your phone.
+Use the Funnel hostname instead — it works from anywhere without VPN.
+
+#### Cause 3: Funnel stopped after Pi reboot
+
+Without `--bg`, Funnel stops when your SSH session ends or the Pi reboots.
+
+Check: `tailscale funnel status`  
+Fix: `tailscale funnel --bg 8080`
+
+#### How to verify Funnel works on cellular
+
+1. Turn off WiFi on your iPhone
+2. Turn off Tailscale VPN on your iPhone
+3. Open Safari and go to: `https://YOUR-PI.ts.net/`
+4. You should see `{"status": "ok", ...}`
+5. If you see an error, Funnel is not running — run `tailscale funnel --bg 8080` on the Pi
 
 ### "Can't connect" after setting up Funnel
 
