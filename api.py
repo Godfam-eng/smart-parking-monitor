@@ -128,7 +128,10 @@ async def handle_status_live_text(request: web.Request) -> web.Response:
     try:
         loop = asyncio.get_running_loop()
         image_bytes = await loop.run_in_executor(None, _camera.grab_frame)
-        result = await loop.run_in_executor(None, _vision.check_home_spot, image_bytes)
+        vision_image = await loop.run_in_executor(
+            None, _camera.prepare_for_vision, image_bytes
+        )
+        result = await loop.run_in_executor(None, _vision.check_home_spot, vision_image)
         status = result.get("status", "UNKNOWN")
         description = result.get("description", "")
 
@@ -155,7 +158,10 @@ async def handle_status_live_json(request: web.Request) -> web.Response:
     try:
         loop = asyncio.get_running_loop()
         image_bytes = await loop.run_in_executor(None, _camera.grab_frame)
-        result = await loop.run_in_executor(None, _vision.check_home_spot, image_bytes)
+        vision_image = await loop.run_in_executor(
+            None, _camera.prepare_for_vision, image_bytes
+        )
+        result = await loop.run_in_executor(None, _vision.check_home_spot, vision_image)
         return web.json_response(
             {
                 "status": result.get("status", "UNKNOWN"),
@@ -182,8 +188,11 @@ async def handle_scan_text(request: web.Request) -> web.Response:
             )
 
         async def _analyse_position(pos):
+            vision_image = await loop.run_in_executor(
+                None, _camera.prepare_for_vision, pos["image"]
+            )
             result = await loop.run_in_executor(
-                None, _vision.check_scan_position, pos["image"], pos["position_name"]
+                None, _vision.check_scan_position, vision_image, pos["position_name"]
             )
             return {**pos, **result}
 
@@ -220,8 +229,11 @@ async def handle_scan_json(request: web.Request) -> web.Response:
         positions = await loop.run_in_executor(None, _camera.scan_street)
 
         async def _analyse_position(pos):
+            vision_image = await loop.run_in_executor(
+                None, _camera.prepare_for_vision, pos["image"]
+            )
             result = await loop.run_in_executor(
-                None, _vision.check_scan_position, pos["image"], pos["position_name"]
+                None, _vision.check_scan_position, vision_image, pos["position_name"]
             )
             return {
                 "angle": pos["angle"],
@@ -375,7 +387,10 @@ async def handle_scan_voice(request: web.Request) -> web.Response:
 
         # Step 2: Check home spot first (fast path — skip full scan if home is free)
         image_bytes = await loop.run_in_executor(None, _camera.grab_frame)
-        home_result = await loop.run_in_executor(None, _vision.check_home_spot, image_bytes)
+        vision_image = await loop.run_in_executor(
+            None, _camera.prepare_for_vision, image_bytes
+        )
+        home_result = await loop.run_in_executor(None, _vision.check_home_spot, vision_image)
 
         home_status = home_result.get("status", "UNKNOWN")
         home_confidence = home_result.get("confidence", "low")
@@ -398,8 +413,11 @@ async def handle_scan_voice(request: web.Request) -> web.Response:
             )
 
         async def _analyse_position(pos):
+            vision_image = await loop.run_in_executor(
+                None, _camera.prepare_for_vision, pos["image"]
+            )
             result = await loop.run_in_executor(
-                None, _vision.check_scan_position, pos["image"], pos["position_name"]
+                None, _vision.check_scan_position, vision_image, pos["position_name"]
             )
             return {
                 "position_name": pos["position_name"],

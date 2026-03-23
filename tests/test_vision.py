@@ -16,7 +16,7 @@ def cfg():
     return Config(
         ANTHROPIC_API_KEY="sk-ant-test",
         CLAUDE_MODEL="claude-sonnet-4-5",
-        CLAUDE_MODEL_FAST="claude-haiku-3-5-20241022",
+        CLAUDE_MODEL_FAST="claude-haiku-4-5-20251001",
         CLAUDE_MAX_TOKENS=150,
         PARKING_ZONE_TOP=30,
         PARKING_ZONE_BOTTOM=80,

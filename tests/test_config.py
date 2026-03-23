@@ -378,8 +378,8 @@ class TestWatchModeConfig:
                     "WATCH_TIMEOUT_HOURS", "LEAVING_GRACE_MINUTES", "LEAVING_DEFAULT_MINUTES"):
             monkeypatch.delenv(key, raising=False)
         cfg = load_config()
-        assert cfg.WATCH_CHECK_INTERVAL == 60
-        assert cfg.LEAVING_CHECK_INTERVAL == 90
+        assert cfg.WATCH_CHECK_INTERVAL == 120
+        assert cfg.LEAVING_CHECK_INTERVAL == 120
         assert cfg.WATCH_TIMEOUT_HOURS == 2
         assert cfg.LEAVING_GRACE_MINUTES == 30
         assert cfg.LEAVING_DEFAULT_MINUTES == 30
@@ -412,7 +412,7 @@ class TestWatchModeConfig:
     def test_watch_interval_invalid_falls_back_to_default(self, monkeypatch):
         monkeypatch.setenv("WATCH_CHECK_INTERVAL", "not_a_number")
         cfg = load_config()
-        assert cfg.WATCH_CHECK_INTERVAL == 60
+        assert cfg.WATCH_CHECK_INTERVAL == 120
 
 
 class TestCostReductionConfig:
@@ -449,7 +449,7 @@ class TestCostReductionConfig:
     def test_claude_model_fast_default(self, monkeypatch):
         monkeypatch.delenv("CLAUDE_MODEL_FAST", raising=False)
         cfg = load_config()
-        assert cfg.CLAUDE_MODEL_FAST == "claude-haiku-3-5-20241022"
+        assert cfg.CLAUDE_MODEL_FAST == "claude-haiku-4-5-20251001"
 
     def test_claude_model_fast_from_env(self, monkeypatch):
         monkeypatch.setenv("CLAUDE_MODEL_FAST", "claude-haiku-3-5-custom")
