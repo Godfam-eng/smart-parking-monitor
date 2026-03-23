@@ -140,7 +140,7 @@ With a 180-second interval and no cost controls, the API can cost £5–£10/day
 **Quick checks:**
 1. Is `CHECK_INTERVAL` set to a sensible value? 600 seconds (10 min) is the new default — 180 s was the old default and caused high spend.
 2. Is `MOTION_GATE_ENABLED=true`? This skips Claude when the camera view hasn't changed (most cycles when a car is parked or the street is consistently occupied).
-3. Is `CLAUDE_MODEL_FAST` set? Background checks now use `claude-haiku-3-5-20241022` (~15× cheaper than Sonnet).
+3. Is `CLAUDE_MODEL_FAST` set? Background checks now use `claude-haiku-4-5-20251001` (~15× cheaper than Sonnet).
 4. Is `VISION_RESIZE_WIDTH=640` and `VISION_RESIZE_HEIGHT=480`? Full 2K images cost ~4,900 image tokens; 640×480 costs ~180 tokens.
 
 **Cost estimate with default settings:**

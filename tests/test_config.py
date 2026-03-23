@@ -452,9 +452,9 @@ class TestCostReductionConfig:
         assert cfg.CLAUDE_MODEL_FAST == "claude-haiku-4-5-20251001"
 
     def test_claude_model_fast_from_env(self, monkeypatch):
-        monkeypatch.setenv("CLAUDE_MODEL_FAST", "claude-haiku-3-5-custom")
+        monkeypatch.setenv("CLAUDE_MODEL_FAST", "claude-haiku-4-5-custom")
         cfg = load_config()
-        assert cfg.CLAUDE_MODEL_FAST == "claude-haiku-3-5-custom"
+        assert cfg.CLAUDE_MODEL_FAST == "claude-haiku-4-5-custom"
 
     def test_motion_gate_enabled_default_true(self, monkeypatch):
         monkeypatch.delenv("MOTION_GATE_ENABLED", raising=False)

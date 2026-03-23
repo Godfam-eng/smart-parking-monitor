@@ -116,13 +116,7 @@ def _run_monitoring_loop(
                     "Motion gate: no significant change detected — skipping Claude API call"
                 )
                 _last_frame = image_bytes
-                if is_watching:
-                    if watch["mode"] == "watch":
-                        check_interval = config.WATCH_CHECK_INTERVAL
-                    else:
-                        check_interval = config.LEAVING_CHECK_INTERVAL
-                else:
-                    check_interval = config.CHECK_INTERVAL
+                check_interval = config.CHECK_INTERVAL
                 elapsed = time.monotonic() - loop_start
                 sleep_time = max(0.0, check_interval - elapsed)
                 _shutdown_event.wait(timeout=sleep_time)
