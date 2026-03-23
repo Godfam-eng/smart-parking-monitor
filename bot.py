@@ -74,7 +74,10 @@ async def _send_status_reply(update: Update) -> None:
     try:
         loop = asyncio.get_running_loop()
         image_bytes = await loop.run_in_executor(None, _camera.grab_frame)
-        result = await loop.run_in_executor(None, _vision.check_home_spot, image_bytes)
+        vision_image = await loop.run_in_executor(
+            None, _camera.prepare_for_vision, image_bytes
+        )
+        result = await loop.run_in_executor(None, _vision.check_home_spot, vision_image)
         status = result.get("status", "UNKNOWN")
         confidence = result.get("confidence", "low")
         description = result.get("description", "")
@@ -103,8 +106,11 @@ async def _send_scan_reply(update: Update) -> None:
             return
 
         async def _analyse(pos):
+            vision_image = await loop.run_in_executor(
+                None, _camera.prepare_for_vision, pos["image"]
+            )
             result = await loop.run_in_executor(
-                None, _vision.check_scan_position, pos["image"], pos["position_name"]
+                None, _vision.check_scan_position, vision_image, pos["position_name"]
             )
             return pos, result
 

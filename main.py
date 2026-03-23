@@ -116,7 +116,16 @@ def _run_monitoring_loop(
                     "Motion gate: no significant change detected — skipping Claude API call"
                 )
                 _last_frame = image_bytes
-                _shutdown_event.wait(config.CHECK_INTERVAL)
+                if is_watching:
+                    if watch["mode"] == "watch":
+                        check_interval = config.WATCH_CHECK_INTERVAL
+                    else:
+                        check_interval = config.LEAVING_CHECK_INTERVAL
+                else:
+                    check_interval = config.CHECK_INTERVAL
+                elapsed = time.monotonic() - loop_start
+                sleep_time = max(0.0, check_interval - elapsed)
+                _shutdown_event.wait(timeout=sleep_time)
                 continue
 
             _last_frame = image_bytes
@@ -150,7 +159,7 @@ def _run_monitoring_loop(
                         notifications.notify_space_occupied(description, image_bytes)
                     state.record_state_change(previous, status, description)
 
-            # 7. Watch mode: proactive updates for /leaving mode
+            # 8. Watch mode: proactive updates for /leaving mode
             if is_watching and watch["mode"] == "leaving":
                 now = time.monotonic()
                 if now - _last_watch_update >= config.LEAVING_UPDATE_INTERVAL:
@@ -170,7 +179,7 @@ def _run_monitoring_loop(
                             )
                         )
 
-            # 8. Periodic background scan to populate the scan cache.
+            # 9. Periodic background scan to populate the scan cache.
             #    Uses early-exit iteration: stops as soon as a free space is found.
             _scan_counter += 1
             if config.BACKGROUND_SCAN_EVERY > 0 and _scan_counter >= config.BACKGROUND_SCAN_EVERY:
@@ -342,16 +351,16 @@ def main() -> None:
     else:
         logger.info("HTTP API disabled")
 
-    # 6. Send startup notification
+    # 7. Send startup notification
     try:
         notifications.notify_startup()
     except Exception as exc:
         logger.warning("Startup notification failed: %s", exc)
 
-    # 7. Run monitoring loop (blocks until shutdown)
+    # 8. Run monitoring loop (blocks until shutdown)
     _run_monitoring_loop(config, camera, vision, notifications, state)
 
-    # 8. Cleanup
+    # 9. Cleanup
     logger.info("Shutdown complete")
     state.close()
 

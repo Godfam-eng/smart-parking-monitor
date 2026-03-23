@@ -47,7 +47,7 @@ class Config:
     CLAUDE_MAX_TOKENS: int = 150        # actual responses are ~80 tokens; was 1024
     # Fast model used for routine background checks (Haiku is ~15x cheaper than Sonnet).
     # Sonnet is still used for on-demand requests (Siri, Telegram, street scans).
-    CLAUDE_MODEL_FAST: str = "claude-haiku-3-5-20241022"
+    CLAUDE_MODEL_FAST: str = "claude-haiku-4-5-20251001"
 
     # --- Telegram Bot ---
     TELEGRAM_BOT_TOKEN: str = ""
@@ -132,8 +132,8 @@ class Config:
     PUBLIC_URL: str = ""
 
     # --- Watch Mode ---
-    WATCH_CHECK_INTERVAL: int = 60        # Check interval during /watch (seconds)
-    LEAVING_CHECK_INTERVAL: int = 90      # Check interval during /leaving (seconds)
+    WATCH_CHECK_INTERVAL: int = 120       # Check interval during /watch (seconds)
+    LEAVING_CHECK_INTERVAL: int = 120     # Check interval during /leaving (seconds)
     WATCH_TIMEOUT_HOURS: int = 2          # Auto-cancel timeout for /watch
     LEAVING_GRACE_MINUTES: int = 30       # Extra time after ETA expires before auto-cancel
     LEAVING_DEFAULT_MINUTES: int = 30     # Default ETA when /leaving is used without argument
@@ -142,7 +142,7 @@ class Config:
     # --- Background Scan Cache ---
     # Run a full scan every N background checks and cache the result for instant
     # Siri /status responses that include street-wide availability.
-    BACKGROUND_SCAN_EVERY: int = 3        # Full scan every N monitoring loop iterations (0 = disabled)
+    BACKGROUND_SCAN_EVERY: int = 0        # Full scan every N monitoring loop iterations (0 = disabled)
     SCAN_CACHE_MAX_AGE: int = 600         # Maximum cache age in seconds before treating as stale
 
 
@@ -193,7 +193,7 @@ def load_config() -> Config:
         ANTHROPIC_API_KEY=os.getenv("ANTHROPIC_API_KEY", ""),
         CLAUDE_MODEL=os.getenv("CLAUDE_MODEL", "claude-sonnet-4-5"),
         CLAUDE_MAX_TOKENS=_safe_int("CLAUDE_MAX_TOKENS", os.getenv("CLAUDE_MAX_TOKENS", "150"), 150),
-        CLAUDE_MODEL_FAST=os.getenv("CLAUDE_MODEL_FAST", "claude-haiku-3-5-20241022"),
+        CLAUDE_MODEL_FAST=os.getenv("CLAUDE_MODEL_FAST", "claude-haiku-4-5-20251001"),
         TELEGRAM_BOT_TOKEN=os.getenv("TELEGRAM_BOT_TOKEN", ""),
         TELEGRAM_CHAT_ID=os.getenv("TELEGRAM_CHAT_ID", ""),
         PUSHOVER_USER_KEY=os.getenv("PUSHOVER_USER_KEY", ""),
@@ -237,13 +237,13 @@ def load_config() -> Config:
         SAFE_PAN_MIN=_safe_int("SAFE_PAN_MIN", os.getenv("SAFE_PAN_MIN", "-180"), -180),
         SAFE_PAN_MAX=_safe_int("SAFE_PAN_MAX", os.getenv("SAFE_PAN_MAX", "180"), 180),
         PUBLIC_URL=os.getenv("PUBLIC_URL", ""),
-        WATCH_CHECK_INTERVAL=_safe_int("WATCH_CHECK_INTERVAL", os.getenv("WATCH_CHECK_INTERVAL", "60"), 60),
-        LEAVING_CHECK_INTERVAL=_safe_int("LEAVING_CHECK_INTERVAL", os.getenv("LEAVING_CHECK_INTERVAL", "90"), 90),
+        WATCH_CHECK_INTERVAL=_safe_int("WATCH_CHECK_INTERVAL", os.getenv("WATCH_CHECK_INTERVAL", "120"), 120),
+        LEAVING_CHECK_INTERVAL=_safe_int("LEAVING_CHECK_INTERVAL", os.getenv("LEAVING_CHECK_INTERVAL", "120"), 120),
         WATCH_TIMEOUT_HOURS=_safe_int("WATCH_TIMEOUT_HOURS", os.getenv("WATCH_TIMEOUT_HOURS", "2"), 2),
         LEAVING_GRACE_MINUTES=_safe_int("LEAVING_GRACE_MINUTES", os.getenv("LEAVING_GRACE_MINUTES", "30"), 30),
         LEAVING_DEFAULT_MINUTES=_safe_int("LEAVING_DEFAULT_MINUTES", os.getenv("LEAVING_DEFAULT_MINUTES", "30"), 30),
         LEAVING_UPDATE_INTERVAL=_safe_int("LEAVING_UPDATE_INTERVAL", os.getenv("LEAVING_UPDATE_INTERVAL", "600"), 600),
-        BACKGROUND_SCAN_EVERY=_safe_int("BACKGROUND_SCAN_EVERY", os.getenv("BACKGROUND_SCAN_EVERY", "3"), 3),
+        BACKGROUND_SCAN_EVERY=_safe_int("BACKGROUND_SCAN_EVERY", os.getenv("BACKGROUND_SCAN_EVERY", "0"), 0),
         SCAN_CACHE_MAX_AGE=_safe_int("SCAN_CACHE_MAX_AGE", os.getenv("SCAN_CACHE_MAX_AGE", "600"), 600),
     )
 
@@ -337,6 +337,11 @@ def validate(config: Config, *, require_telegram: bool = True, require_anthropic
 
     if not config.API_KEY:
         logger.warning("API_KEY not set — HTTP API is unauthenticated (set API_KEY in .env to enable)")
+
+    if not config.CLAUDE_MODEL_FAST:
+        logger.warning(
+            "CLAUDE_MODEL_FAST is not set — background monitoring will use the default model"
+        )
 
     if not config.TAPO_API_USER and not config.TAPO_CLOUD_USER:
         logger.warning(
