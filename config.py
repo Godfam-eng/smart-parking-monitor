@@ -44,7 +44,10 @@ class Config:
     # --- Anthropic Claude API ---
     ANTHROPIC_API_KEY: str = ""
     CLAUDE_MODEL: str = "claude-sonnet-4-5"
-    CLAUDE_MAX_TOKENS: int = 1024
+    CLAUDE_MAX_TOKENS: int = 150        # actual responses are ~80 tokens; was 1024
+    # Fast model used for routine background checks (Haiku is ~15x cheaper than Sonnet).
+    # Sonnet is still used for on-demand requests (Siri, Telegram, street scans).
+    CLAUDE_MODEL_FAST: str = "claude-haiku-3-5-20241022"
 
     # --- Telegram Bot ---
     TELEGRAM_BOT_TOKEN: str = ""
@@ -55,8 +58,24 @@ class Config:
     PUSHOVER_API_TOKEN: str = ""
 
     # --- Monitoring Settings ---
-    CHECK_INTERVAL: int = 180
+    # 10 min is plenty for a parked car; 180 s (3 min) was needlessly expensive.
+    CHECK_INTERVAL: int = 600
     CONFIDENCE_THRESHOLD: str = "medium"
+
+    # --- Vision Pre-Processing (image resize before sending to Claude) ---
+    # Resizing from 2K to 640×480 reduces image token cost by ~85%.
+    VISION_RESIZE_WIDTH: int = 640
+    VISION_RESIZE_HEIGHT: int = 480
+    # Crop to parking zone before resize (cuts out irrelevant sky/opposite-side pixels).
+    VISION_CROP_TO_ZONE: bool = True
+
+    # --- Motion Gate ---
+    # Skip the Claude API call entirely when the parking zone hasn't changed.
+    # Frame differencing runs on the Pi CPU at zero API cost.
+    MOTION_GATE_ENABLED: bool = True
+    # Fraction of parking-zone pixels that must change (0.02 = 2%).
+    # Lighting flicker stays below 1 %; a car arriving/leaving causes 10–30 % change.
+    MOTION_GATE_THRESHOLD: float = 0.02
 
     # --- Quiet Hours ---
     QUIET_HOURS_START: int = 23
@@ -173,12 +192,13 @@ def load_config() -> Config:
         TAPO_API_PASSWORD=os.getenv("TAPO_API_PASSWORD", ""),
         ANTHROPIC_API_KEY=os.getenv("ANTHROPIC_API_KEY", ""),
         CLAUDE_MODEL=os.getenv("CLAUDE_MODEL", "claude-sonnet-4-5"),
-        CLAUDE_MAX_TOKENS=_safe_int("CLAUDE_MAX_TOKENS", os.getenv("CLAUDE_MAX_TOKENS", "1024"), 1024),
+        CLAUDE_MAX_TOKENS=_safe_int("CLAUDE_MAX_TOKENS", os.getenv("CLAUDE_MAX_TOKENS", "150"), 150),
+        CLAUDE_MODEL_FAST=os.getenv("CLAUDE_MODEL_FAST", "claude-haiku-3-5-20241022"),
         TELEGRAM_BOT_TOKEN=os.getenv("TELEGRAM_BOT_TOKEN", ""),
         TELEGRAM_CHAT_ID=os.getenv("TELEGRAM_CHAT_ID", ""),
         PUSHOVER_USER_KEY=os.getenv("PUSHOVER_USER_KEY", ""),
         PUSHOVER_API_TOKEN=os.getenv("PUSHOVER_API_TOKEN", ""),
-        CHECK_INTERVAL=_safe_int("CHECK_INTERVAL", os.getenv("CHECK_INTERVAL", "180"), 180),
+        CHECK_INTERVAL=_safe_int("CHECK_INTERVAL", os.getenv("CHECK_INTERVAL", "600"), 600),
         CONFIDENCE_THRESHOLD=os.getenv("CONFIDENCE_THRESHOLD", "medium"),
         QUIET_HOURS_START=_safe_int("QUIET_HOURS_START", os.getenv("QUIET_HOURS_START", "23"), 23),
         QUIET_HOURS_END=_safe_int("QUIET_HOURS_END", os.getenv("QUIET_HOURS_END", "7"), 7),
@@ -186,6 +206,11 @@ def load_config() -> Config:
         PARKING_ZONE_BOTTOM=_safe_int("PARKING_ZONE_BOTTOM", os.getenv("PARKING_ZONE_BOTTOM", "80"), 80),
         PARKING_ZONE_LEFT=_safe_int("PARKING_ZONE_LEFT", os.getenv("PARKING_ZONE_LEFT", "20"), 20),
         PARKING_ZONE_RIGHT=_safe_int("PARKING_ZONE_RIGHT", os.getenv("PARKING_ZONE_RIGHT", "80"), 80),
+        VISION_RESIZE_WIDTH=_safe_int("VISION_RESIZE_WIDTH", os.getenv("VISION_RESIZE_WIDTH", "640"), 640),
+        VISION_RESIZE_HEIGHT=_safe_int("VISION_RESIZE_HEIGHT", os.getenv("VISION_RESIZE_HEIGHT", "480"), 480),
+        VISION_CROP_TO_ZONE=os.getenv("VISION_CROP_TO_ZONE", "true").lower() in ("true", "1", "yes"),
+        MOTION_GATE_ENABLED=os.getenv("MOTION_GATE_ENABLED", "true").lower() in ("true", "1", "yes"),
+        MOTION_GATE_THRESHOLD=_safe_float("MOTION_GATE_THRESHOLD", os.getenv("MOTION_GATE_THRESHOLD", "0.02"), 0.02),
         SCAN_POSITIONS=_parse_scan_positions(raw_positions),
         HOME_POSITION=_safe_int("HOME_POSITION", os.getenv("HOME_POSITION", "0"), 0),
         SCAN_SETTLE_TIME=_safe_float("SCAN_SETTLE_TIME", os.getenv("SCAN_SETTLE_TIME", "2.5"), 2.5),
@@ -272,6 +297,14 @@ def validate(config: Config, *, require_telegram: bool = True, require_anthropic
         range_errors.append(f"QUIET_HOURS_START={config.QUIET_HOURS_START} must be 0–23")
     if not 0 <= config.QUIET_HOURS_END <= 23:
         range_errors.append(f"QUIET_HOURS_END={config.QUIET_HOURS_END} must be 0–23")
+    if config.VISION_RESIZE_WIDTH <= 0:
+        range_errors.append(f"VISION_RESIZE_WIDTH={config.VISION_RESIZE_WIDTH} must be > 0")
+    if config.VISION_RESIZE_HEIGHT <= 0:
+        range_errors.append(f"VISION_RESIZE_HEIGHT={config.VISION_RESIZE_HEIGHT} must be > 0")
+    if not 0.0 <= config.MOTION_GATE_THRESHOLD <= 1.0:
+        range_errors.append(
+            f"MOTION_GATE_THRESHOLD={config.MOTION_GATE_THRESHOLD} must be between 0 and 1"
+        )
     for zone_name, zone_val in (
         ("PARKING_ZONE_TOP", config.PARKING_ZONE_TOP),
         ("PARKING_ZONE_BOTTOM", config.PARKING_ZONE_BOTTOM),

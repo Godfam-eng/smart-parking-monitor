@@ -52,8 +52,8 @@ class TestConfigDefaults:
         assert cfg.TAPO_RTSP_PORT == 554
         assert cfg.TAPO_STREAM_PATH == "stream1"
         assert cfg.CLAUDE_MODEL == "claude-sonnet-4-5"
-        assert cfg.CLAUDE_MAX_TOKENS == 1024
-        assert cfg.CHECK_INTERVAL == 180
+        assert cfg.CLAUDE_MAX_TOKENS == 150       # new default (was 1024)
+        assert cfg.CHECK_INTERVAL == 600          # new default (was 180)
         assert cfg.CONFIDENCE_THRESHOLD == "medium"
         assert cfg.QUIET_HOURS_START == 23
         assert cfg.QUIET_HOURS_END == 7
@@ -413,3 +413,127 @@ class TestWatchModeConfig:
         monkeypatch.setenv("WATCH_CHECK_INTERVAL", "not_a_number")
         cfg = load_config()
         assert cfg.WATCH_CHECK_INTERVAL == 60
+
+
+class TestCostReductionConfig:
+    def test_vision_resize_defaults(self, monkeypatch):
+        monkeypatch.delenv("VISION_RESIZE_WIDTH", raising=False)
+        monkeypatch.delenv("VISION_RESIZE_HEIGHT", raising=False)
+        cfg = load_config()
+        assert cfg.VISION_RESIZE_WIDTH == 640
+        assert cfg.VISION_RESIZE_HEIGHT == 480
+
+    def test_vision_resize_from_env(self, monkeypatch):
+        monkeypatch.setenv("VISION_RESIZE_WIDTH", "320")
+        monkeypatch.setenv("VISION_RESIZE_HEIGHT", "240")
+        cfg = load_config()
+        assert cfg.VISION_RESIZE_WIDTH == 320
+        assert cfg.VISION_RESIZE_HEIGHT == 240
+
+    def test_vision_crop_to_zone_default_true(self, monkeypatch):
+        monkeypatch.delenv("VISION_CROP_TO_ZONE", raising=False)
+        cfg = load_config()
+        assert cfg.VISION_CROP_TO_ZONE is True
+
+    def test_vision_crop_to_zone_false_from_env(self, monkeypatch):
+        monkeypatch.setenv("VISION_CROP_TO_ZONE", "false")
+        cfg = load_config()
+        assert cfg.VISION_CROP_TO_ZONE is False
+
+    def test_vision_crop_to_zone_true_variants(self, monkeypatch):
+        for truthy in ("true", "1", "yes", "True", "TRUE"):
+            monkeypatch.setenv("VISION_CROP_TO_ZONE", truthy)
+            cfg = load_config()
+            assert cfg.VISION_CROP_TO_ZONE is True
+
+    def test_claude_model_fast_default(self, monkeypatch):
+        monkeypatch.delenv("CLAUDE_MODEL_FAST", raising=False)
+        cfg = load_config()
+        assert cfg.CLAUDE_MODEL_FAST == "claude-haiku-3-5-20241022"
+
+    def test_claude_model_fast_from_env(self, monkeypatch):
+        monkeypatch.setenv("CLAUDE_MODEL_FAST", "claude-haiku-3-5-custom")
+        cfg = load_config()
+        assert cfg.CLAUDE_MODEL_FAST == "claude-haiku-3-5-custom"
+
+    def test_motion_gate_enabled_default_true(self, monkeypatch):
+        monkeypatch.delenv("MOTION_GATE_ENABLED", raising=False)
+        cfg = load_config()
+        assert cfg.MOTION_GATE_ENABLED is True
+
+    def test_motion_gate_enabled_false_from_env(self, monkeypatch):
+        monkeypatch.setenv("MOTION_GATE_ENABLED", "false")
+        cfg = load_config()
+        assert cfg.MOTION_GATE_ENABLED is False
+
+    def test_motion_gate_threshold_default(self, monkeypatch):
+        monkeypatch.delenv("MOTION_GATE_THRESHOLD", raising=False)
+        cfg = load_config()
+        assert cfg.MOTION_GATE_THRESHOLD == 0.02
+
+    def test_motion_gate_threshold_from_env(self, monkeypatch):
+        monkeypatch.setenv("MOTION_GATE_THRESHOLD", "0.05")
+        cfg = load_config()
+        assert cfg.MOTION_GATE_THRESHOLD == 0.05
+
+    def test_validate_rejects_zero_resize_width(self):
+        cfg = Config(
+            TAPO_IP="192.168.1.1",
+            TAPO_USER="admin",
+            TAPO_PASSWORD="password",
+            ANTHROPIC_API_KEY="sk-ant-key",
+            TELEGRAM_BOT_TOKEN="1234:ABC",
+            TELEGRAM_CHAT_ID="987654",
+            VISION_RESIZE_WIDTH=0,
+        )
+        assert validate(cfg) is False
+
+    def test_validate_rejects_zero_resize_height(self):
+        cfg = Config(
+            TAPO_IP="192.168.1.1",
+            TAPO_USER="admin",
+            TAPO_PASSWORD="password",
+            ANTHROPIC_API_KEY="sk-ant-key",
+            TELEGRAM_BOT_TOKEN="1234:ABC",
+            TELEGRAM_CHAT_ID="987654",
+            VISION_RESIZE_HEIGHT=0,
+        )
+        assert validate(cfg) is False
+
+    def test_validate_rejects_threshold_above_one(self):
+        cfg = Config(
+            TAPO_IP="192.168.1.1",
+            TAPO_USER="admin",
+            TAPO_PASSWORD="password",
+            ANTHROPIC_API_KEY="sk-ant-key",
+            TELEGRAM_BOT_TOKEN="1234:ABC",
+            TELEGRAM_CHAT_ID="987654",
+            MOTION_GATE_THRESHOLD=1.5,
+        )
+        assert validate(cfg) is False
+
+    def test_validate_rejects_threshold_below_zero(self):
+        cfg = Config(
+            TAPO_IP="192.168.1.1",
+            TAPO_USER="admin",
+            TAPO_PASSWORD="password",
+            ANTHROPIC_API_KEY="sk-ant-key",
+            TELEGRAM_BOT_TOKEN="1234:ABC",
+            TELEGRAM_CHAT_ID="987654",
+            MOTION_GATE_THRESHOLD=-0.1,
+        )
+        assert validate(cfg) is False
+
+    def test_validate_passes_with_valid_cost_fields(self):
+        cfg = Config(
+            TAPO_IP="192.168.1.1",
+            TAPO_USER="admin",
+            TAPO_PASSWORD="password",
+            ANTHROPIC_API_KEY="sk-ant-key",
+            TELEGRAM_BOT_TOKEN="1234:ABC",
+            TELEGRAM_CHAT_ID="987654",
+            VISION_RESIZE_WIDTH=640,
+            VISION_RESIZE_HEIGHT=480,
+            MOTION_GATE_THRESHOLD=0.02,
+        )
+        assert validate(cfg) is True

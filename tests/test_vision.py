@@ -16,7 +16,8 @@ def cfg():
     return Config(
         ANTHROPIC_API_KEY="sk-ant-test",
         CLAUDE_MODEL="claude-sonnet-4-5",
-        CLAUDE_MAX_TOKENS=1024,
+        CLAUDE_MODEL_FAST="claude-haiku-3-5-20241022",
+        CLAUDE_MAX_TOKENS=150,
         PARKING_ZONE_TOP=30,
         PARKING_ZONE_BOTTOM=80,
         PARKING_ZONE_LEFT=20,
@@ -174,6 +175,50 @@ class TestCheckHomeSpot:
 
         result = vision.check_scan_position(b"fake-image-bytes", "left")
         assert result["status"] == "OCCUPIED"
+
+    def test_check_home_spot_uses_fast_model_when_flag_set(self, vision):
+        """use_fast_model=True should pass CLAUDE_MODEL_FAST to the API."""
+        mock_response = MagicMock()
+        mock_response.content = [MagicMock(text='{"status": "FREE", "confidence": "high", "description": "Clear."}')]
+        vision.client.messages.create.return_value = mock_response
+
+        vision.check_home_spot(b"fake", use_fast_model=True)
+
+        call_kwargs = vision.client.messages.create.call_args
+        assert call_kwargs[1]["model"] == vision.config.CLAUDE_MODEL_FAST
+
+    def test_check_home_spot_uses_default_model_when_flag_false(self, vision):
+        """use_fast_model=False (default) should use CLAUDE_MODEL (Sonnet)."""
+        mock_response = MagicMock()
+        mock_response.content = [MagicMock(text='{"status": "FREE", "confidence": "high", "description": "Clear."}')]
+        vision.client.messages.create.return_value = mock_response
+
+        vision.check_home_spot(b"fake", use_fast_model=False)
+
+        call_kwargs = vision.client.messages.create.call_args
+        assert call_kwargs[1]["model"] == vision.config.CLAUDE_MODEL
+
+    def test_check_home_spot_default_does_not_use_fast_model(self, vision):
+        """Calling check_home_spot() without the flag should default to CLAUDE_MODEL."""
+        mock_response = MagicMock()
+        mock_response.content = [MagicMock(text='{"status": "FREE", "confidence": "high", "description": "Clear."}')]
+        vision.client.messages.create.return_value = mock_response
+
+        vision.check_home_spot(b"fake")
+
+        call_kwargs = vision.client.messages.create.call_args
+        assert call_kwargs[1]["model"] == vision.config.CLAUDE_MODEL
+
+    def test_check_scan_position_always_uses_default_model(self, vision):
+        """check_scan_position() should never use the fast model."""
+        mock_response = MagicMock()
+        mock_response.content = [MagicMock(text='{"status": "FREE", "confidence": "high", "description": "Clear."}')]
+        vision.client.messages.create.return_value = mock_response
+
+        vision.check_scan_position(b"fake", "left")
+
+        call_kwargs = vision.client.messages.create.call_args
+        assert call_kwargs[1]["model"] == vision.config.CLAUDE_MODEL
 
 
 class TestCalibrationAssessment:

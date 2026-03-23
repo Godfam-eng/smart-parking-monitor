@@ -12,6 +12,7 @@ import sys
 import threading
 import time
 from datetime import datetime, timezone
+from typing import Optional
 
 from config import load_config, validate
 from camera import TapoCamera
@@ -37,6 +38,9 @@ logger = logging.getLogger(__name__)
 # Graceful shutdown event
 # ---------------------------------------------------------------------------
 _shutdown_event = threading.Event()
+
+# Last frame seen by the monitoring loop — used for motion gate comparison.
+_last_frame: Optional[bytes] = None
 
 
 def _handle_signal(signum: int, frame) -> None:
@@ -73,6 +77,7 @@ def _run_monitoring_loop(
     state: ParkingState,
 ) -> None:
     """Run the main parking-check loop until shutdown is requested."""
+    global _last_frame
     logger.info(
         "Monitoring loop started (interval=%ds, threshold=%s)",
         config.CHECK_INTERVAL,
@@ -97,8 +102,29 @@ def _run_monitoring_loop(
             # 2. Grab frame
             image_bytes = camera.grab_frame()
 
-            # 3. Analyse
-            result = vision.check_home_spot(image_bytes)
+            # 3. Motion gate — skip Claude if the parking zone hasn't changed.
+            #    Only applies during background monitoring (not watch mode or
+            #    on-demand requests).  Fails open: if _last_frame is None or
+            #    frames can't be compared, we always proceed to Claude.
+            if (
+                not is_watching
+                and config.MOTION_GATE_ENABLED
+                and _last_frame is not None
+                and not camera.has_significant_change(_last_frame, image_bytes)
+            ):
+                logger.debug(
+                    "Motion gate: no significant change detected — skipping Claude API call"
+                )
+                _last_frame = image_bytes
+                _shutdown_event.wait(config.CHECK_INTERVAL)
+                continue
+
+            _last_frame = image_bytes
+
+            # 4. Prepare image for Claude (resize + crop) and use fast model
+            #    for routine background checks.
+            vision_image = camera.prepare_for_vision(image_bytes)
+            result = vision.check_home_spot(vision_image, use_fast_model=True)
             status = result.get("status", "UNKNOWN")
             confidence = result.get("confidence", "low")
             description = result.get("description", "")
@@ -107,13 +133,13 @@ def _run_monitoring_loop(
                 "Check: status=%s confidence=%s — %s", status, confidence, description
             )
 
-            # 4. Save previous status BEFORE recording the current check
+            # 5. Save previous status BEFORE recording the current check
             previous = state.get_previous_status()
 
-            # 5. Record the current check first
+            # 6. Record the current check first
             state.record_check(status, confidence, description, angle=config.HOME_POSITION)
 
-            # 6. Notify if state changed and confidence threshold met.
+            # 7. Notify if state changed and confidence threshold met.
             #    Skip on the very first run (previous is None) to avoid a spurious alert.
             if status != "UNKNOWN" and _meets_threshold(confidence, config.CONFIDENCE_THRESHOLD):
                 if previous is not None and previous != status:
