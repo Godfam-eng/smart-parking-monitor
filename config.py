@@ -145,6 +145,29 @@ class Config:
     BACKGROUND_SCAN_EVERY: int = 0        # Full scan every N monitoring loop iterations (0 = disabled)
     SCAN_CACHE_MAX_AGE: int = 600         # Maximum cache age in seconds before treating as stale
 
+    # --- HomeKit Integration ---
+    HOMEKIT_ENABLE: bool = False
+    HOMEKIT_PIN: str = "031-45-154"
+    HOMEKIT_PORT: int = 51826
+    HOMEKIT_NAME: str = "Parking Monitor"
+    HOMEKIT_STATE_FILE: str = "homekit.state"
+
+    # --- Cost Tracking ---
+    COST_TRACKING_ENABLE: bool = True
+
+    # --- Snapshot History ---
+    SNAPSHOT_HISTORY_ENABLE: bool = True
+    SNAPSHOT_DIR: str = "snapshots"
+    SNAPSHOT_BUFFER_SIZE: int = 5
+    SNAPSHOT_MAX_PAIRS: int = 100
+
+    # --- Notification Batching ---
+    NOTIFICATION_CONFIRM_SECONDS: int = 60
+
+    # --- Night Mode ---
+    NIGHT_MODE_MODEL: str = "claude-sonnet-4-5"
+    NIGHT_MODE_INTERVAL_MULTIPLIER: int = 2
+
 
 def _parse_scan_positions(raw: str) -> List[int]:
     """Parse a comma-separated string of pan angles into a list of ints."""
@@ -245,6 +268,23 @@ def load_config() -> Config:
         LEAVING_UPDATE_INTERVAL=_safe_int("LEAVING_UPDATE_INTERVAL", os.getenv("LEAVING_UPDATE_INTERVAL", "600"), 600),
         BACKGROUND_SCAN_EVERY=_safe_int("BACKGROUND_SCAN_EVERY", os.getenv("BACKGROUND_SCAN_EVERY", "0"), 0),
         SCAN_CACHE_MAX_AGE=_safe_int("SCAN_CACHE_MAX_AGE", os.getenv("SCAN_CACHE_MAX_AGE", "600"), 600),
+        HOMEKIT_ENABLE=os.getenv("HOMEKIT_ENABLE", "false").lower() in ("true", "1", "yes"),
+        HOMEKIT_PIN=os.getenv("HOMEKIT_PIN", "031-45-154"),
+        HOMEKIT_PORT=_safe_int("HOMEKIT_PORT", os.getenv("HOMEKIT_PORT", "51826"), 51826),
+        HOMEKIT_NAME=os.getenv("HOMEKIT_NAME", "Parking Monitor"),
+        HOMEKIT_STATE_FILE=os.getenv("HOMEKIT_STATE_FILE", "homekit.state"),
+        COST_TRACKING_ENABLE=os.getenv("COST_TRACKING_ENABLE", "true").lower() in ("true", "1", "yes"),
+        SNAPSHOT_HISTORY_ENABLE=os.getenv("SNAPSHOT_HISTORY_ENABLE", "true").lower() in ("true", "1", "yes"),
+        SNAPSHOT_DIR=os.getenv("SNAPSHOT_DIR", "snapshots"),
+        SNAPSHOT_BUFFER_SIZE=_safe_int("SNAPSHOT_BUFFER_SIZE", os.getenv("SNAPSHOT_BUFFER_SIZE", "5"), 5),
+        SNAPSHOT_MAX_PAIRS=_safe_int("SNAPSHOT_MAX_PAIRS", os.getenv("SNAPSHOT_MAX_PAIRS", "100"), 100),
+        NOTIFICATION_CONFIRM_SECONDS=_safe_int(
+            "NOTIFICATION_CONFIRM_SECONDS", os.getenv("NOTIFICATION_CONFIRM_SECONDS", "60"), 60
+        ),
+        NIGHT_MODE_MODEL=os.getenv("NIGHT_MODE_MODEL", "claude-sonnet-4-5"),
+        NIGHT_MODE_INTERVAL_MULTIPLIER=_safe_int(
+            "NIGHT_MODE_INTERVAL_MULTIPLIER", os.getenv("NIGHT_MODE_INTERVAL_MULTIPLIER", "2"), 2
+        ),
     )
 
 

@@ -113,6 +113,28 @@ class ParkingState:
 
                 CREATE INDEX IF NOT EXISTS idx_scan_cache_timestamp
                     ON scan_cache (timestamp);
+
+                CREATE TABLE IF NOT EXISTS api_costs (
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp       TEXT    DEFAULT CURRENT_TIMESTAMP,
+                    model           TEXT    NOT NULL,
+                    input_tokens    INTEGER NOT NULL,
+                    output_tokens   INTEGER NOT NULL,
+                    estimated_cost  REAL    NOT NULL,
+                    check_type      TEXT    NOT NULL DEFAULT 'home'
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_api_costs_timestamp
+                    ON api_costs (timestamp);
+
+                CREATE TABLE IF NOT EXISTS transient_flips (
+                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp   TEXT    DEFAULT CURRENT_TIMESTAMP,
+                    from_status TEXT    NOT NULL,
+                    to_status   TEXT    NOT NULL,
+                    back_status TEXT    NOT NULL,
+                    description TEXT
+                );
                 """
             )
 
@@ -196,6 +218,33 @@ class ParkingState:
                     (old_status, new_status, description),
                 )
         logger.info("State changed: %s → %s", old_status, new_status)
+
+    def record_transient_flip(
+        self,
+        from_status: str,
+        to_status: str,
+        back_status: str,
+        description: str = "",
+    ) -> None:
+        """
+        Record a transient state flip that was suppressed by notification batching.
+
+        Args:
+            from_status: Status before the flip.
+            to_status:   Status during the flip (the one that was pending).
+            back_status: Status that cancelled the notification.
+            description: Optional description.
+        """
+        with self._lock:
+            with self._conn:
+                self._conn.execute(
+                    "INSERT INTO transient_flips (from_status, to_status, back_status, description)"
+                    " VALUES (?, ?, ?, ?)",
+                    (from_status, to_status, back_status, description),
+                )
+        logger.info(
+            "Transient flip recorded: %s → %s → %s", from_status, to_status, back_status
+        )
 
     # ------------------------------------------------------------------
     # Read operations
@@ -591,6 +640,47 @@ class ParkingState:
             with self._conn:
                 self._conn.execute("DELETE FROM scan_cache")
         logger.debug("Scan cache cleared")
+
+    # ------------------------------------------------------------------
+    # Cost tracking queries
+    # ------------------------------------------------------------------
+
+    def get_cost_summary(self) -> dict:
+        """
+        Return a cost summary dict with today/week/month/all_time totals.
+
+        Returns:
+            Dict with keys: today, week, month, all_time (USD floats).
+        """
+        from datetime import timedelta
+        now = datetime.now(timezone.utc)
+        day_str = now.strftime("%Y-%m-%d")
+        week_cutoff = (now - timedelta(days=7)).strftime("%Y-%m-%d %H:%M:%S")
+        month_cutoff = (now - timedelta(days=30)).strftime("%Y-%m-%d %H:%M:%S")
+
+        with self._lock:
+            today = self._conn.execute(
+                "SELECT SUM(estimated_cost) FROM api_costs WHERE date(timestamp) = ?",
+                (day_str,),
+            ).fetchone()[0] or 0.0
+            week = self._conn.execute(
+                "SELECT SUM(estimated_cost) FROM api_costs WHERE timestamp >= ?",
+                (week_cutoff,),
+            ).fetchone()[0] or 0.0
+            month = self._conn.execute(
+                "SELECT SUM(estimated_cost) FROM api_costs WHERE timestamp >= ?",
+                (month_cutoff,),
+            ).fetchone()[0] or 0.0
+            all_time = self._conn.execute(
+                "SELECT SUM(estimated_cost) FROM api_costs"
+            ).fetchone()[0] or 0.0
+
+        return {
+            "today": round(today, 6),
+            "week": round(week, 6),
+            "month": round(month, 6),
+            "all_time": round(all_time, 6),
+        }
 
     # ------------------------------------------------------------------
     # Maintenance

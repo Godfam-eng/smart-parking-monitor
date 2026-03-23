@@ -35,6 +35,7 @@ _vision: Optional[ParkingVision] = None
 _state: Optional[ParkingState] = None
 _notifications: Optional[NotificationManager] = None
 _calibrator = None  # Optional[AutoCalibrator] — imported lazily to avoid circular refs
+_cost_tracker = None  # Optional[CostTracker]
 
 
 # ------------------------------------------------------------------
@@ -205,6 +206,8 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/watch — Passive watchdog — alert when space appears (2hr timeout)\n"
         "/leaving [minutes] — Commute mode — ETA-aware, check every 90s\n"
         "/unwatch — Cancel watch/commute mode\n"
+        "/cost — Show Claude API cost summary\n"
+        "/homekit — Show HomeKit integration status\n"
         "/help — Show this help message"
     )
     await update.message.reply_text(text, parse_mode="Markdown")
@@ -368,6 +371,56 @@ async def cmd_unwatch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     )
 
 
+@_authorised
+async def cmd_cost(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/cost — Show Claude API cost summary."""
+    try:
+        if _cost_tracker is not None:
+            summary = _cost_tracker.get_cost_summary()
+        elif _state is not None:
+            summary = _state.get_cost_summary()
+        else:
+            await update.message.reply_text("⚠️ Cost tracking not available.")
+            return
+
+        text = (
+            "💰 *Claude API Cost Summary*\n\n"
+            f"📅 Today: *${summary['today']:.4f}*\n"
+            f"📆 This week: *${summary['week']:.4f}*\n"
+            f"🗓 This month: *${summary['month']:.4f}*\n"
+            f"🏛 All time: *${summary['all_time']:.4f}*"
+        )
+        await update.message.reply_text(text, parse_mode="Markdown")
+    except Exception as exc:
+        logger.error("Error in /cost handler: %s", exc)
+        await update.message.reply_text(f"⚠️ Error fetching cost data: {exc}")
+
+
+@_authorised
+async def cmd_homekit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/homekit — Show HomeKit integration status."""
+    try:
+        from homekit import get_homekit_accessory
+        acc = get_homekit_accessory()
+        if acc is None:
+            if _config and getattr(_config, "HOMEKIT_ENABLE", False):
+                text = "🏠 HomeKit is enabled but not yet paired. Check the setup guide."
+            else:
+                text = "🏠 HomeKit integration is disabled (set HOMEKIT_ENABLE=true in .env to enable)."
+        else:
+            text = (
+                f"🏠 *HomeKit Active*\n\n"
+                f"Name: *{getattr(_config, 'HOMEKIT_NAME', 'Parking Monitor')}*\n"
+                f"PIN: *{getattr(_config, 'HOMEKIT_PIN', '031-45-154')}*\n"
+                f"Port: *{getattr(_config, 'HOMEKIT_PORT', 51826)}*\n\n"
+                "Open the Apple Home app and scan the PIN to pair."
+            )
+        await update.message.reply_text(text, parse_mode="Markdown")
+    except Exception as exc:
+        logger.error("Error in /homekit handler: %s", exc)
+        await update.message.reply_text(f"⚠️ Error fetching HomeKit status: {exc}")
+
+
 # ------------------------------------------------------------------
 # Natural language handler
 # ------------------------------------------------------------------
@@ -419,6 +472,8 @@ def _build_application(cfg: Config) -> Application:
     app.add_handler(CommandHandler("watch", cmd_watch))
     app.add_handler(CommandHandler("leaving", cmd_leaving))
     app.add_handler(CommandHandler("unwatch", cmd_unwatch))
+    app.add_handler(CommandHandler("cost", cmd_cost))
+    app.add_handler(CommandHandler("homekit", cmd_homekit))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     return app
 
@@ -433,6 +488,7 @@ def start_bot(
     vision: ParkingVision,
     state: ParkingState,
     notifications: Optional[NotificationManager] = None,
+    cost_tracker=None,
 ) -> None:
     """
     Initialise module globals and start the Telegram bot polling loop.
@@ -440,12 +496,13 @@ def start_bot(
     Intended to be called in a daemon thread from main.py.
     Also works standalone: ``python bot.py``
     """
-    global _config, _camera, _vision, _state, _notifications, _calibrator
+    global _config, _camera, _vision, _state, _notifications, _calibrator, _cost_tracker
     _config = cfg
     _camera = camera
     _vision = vision
     _state = state
     _notifications = notifications
+    _cost_tracker = cost_tracker
 
     # Create the calibrator lazily here to avoid circular imports at module level
     try:
@@ -465,7 +522,6 @@ def start_bot(
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     app.run_polling(drop_pending_updates=True, stop_signals=None)
-
 
 # ------------------------------------------------------------------
 # Standalone entry point

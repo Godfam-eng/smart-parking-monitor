@@ -37,16 +37,28 @@ _CALIBRATION_FALLBACK = {
 class ParkingVision:
     """Uses Claude vision API to analyse parking space images."""
 
-    def __init__(self, config: Config) -> None:
-        """Initialise with configuration and create the Anthropic client."""
+    def __init__(self, config: Config, cost_tracker=None) -> None:
+        """
+        Initialise with configuration and create the Anthropic client.
+
+        Args:
+            config: Application configuration.
+            cost_tracker: Optional CostTracker instance for recording API usage.
+        """
         self.config = config
         self.client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
+        self._cost_tracker = cost_tracker
 
     # ------------------------------------------------------------------
     # Public analysis methods
     # ------------------------------------------------------------------
 
-    def check_home_spot(self, image_bytes: bytes, use_fast_model: bool = False) -> dict:
+    def check_home_spot(
+        self,
+        image_bytes: bytes,
+        use_fast_model: bool = False,
+        model_override: Optional[str] = None,
+    ) -> dict:
         """
         Analyse an image for the home parking spot status.
 
@@ -56,15 +68,31 @@ class ParkingVision:
             use_fast_model: If True, use CLAUDE_MODEL_FAST (Haiku) instead of
                             CLAUDE_MODEL (Sonnet).  Use True for background
                             monitoring; False (default) for on-demand requests.
+            model_override: Explicit model ID that takes priority over the above.
 
         Returns:
             Dict with keys: status ("FREE"/"OCCUPIED"/"UNKNOWN"),
             confidence ("high"/"medium"/"low"), description (str).
         """
         prompt = self._build_home_prompt()
-        model = self.config.CLAUDE_MODEL_FAST if use_fast_model else self.config.CLAUDE_MODEL
+        if model_override:
+            model = model_override
+        elif use_fast_model:
+            model = self.config.CLAUDE_MODEL_FAST
+        else:
+            model = self.config.CLAUDE_MODEL
         try:
-            raw_text = self._send_to_claude(image_bytes, prompt, model=model)
+            raw_text, usage = self._send_to_claude(image_bytes, prompt, model=model)
+            if usage and self._cost_tracker:
+                try:
+                    self._cost_tracker.record_call(
+                        model=model,
+                        input_tokens=usage.input_tokens,
+                        output_tokens=usage.output_tokens,
+                        check_type="home",
+                    )
+                except Exception as exc:
+                    logger.debug("Cost tracking error: %s", exc)
             result = self._parse_response(raw_text)
             logger.info(
                 "Home spot check: status=%s confidence=%s — %s",
@@ -98,8 +126,19 @@ class ParkingVision:
             Dict with keys: status, confidence, description.
         """
         prompt = self._build_scan_prompt(position_name)
+        model = self.config.CLAUDE_MODEL
         try:
-            raw_text = self._send_to_claude(image_bytes, prompt)
+            raw_text, usage = self._send_to_claude(image_bytes, prompt, model=model)
+            if usage and self._cost_tracker:
+                try:
+                    self._cost_tracker.record_call(
+                        model=model,
+                        input_tokens=usage.input_tokens,
+                        output_tokens=usage.output_tokens,
+                        check_type="scan",
+                    )
+                except Exception as exc:
+                    logger.debug("Cost tracking error: %s", exc)
             result = self._parse_response(raw_text)
             logger.info(
                 "Scan position '%s': status=%s confidence=%s",
@@ -139,8 +178,19 @@ class ParkingVision:
             usefulness_score (0–10), description.
         """
         prompt = self._build_calibration_prompt(angle)
+        model = self.config.CLAUDE_MODEL
         try:
-            raw_text = self._send_to_claude(image_bytes, prompt)
+            raw_text, usage = self._send_to_claude(image_bytes, prompt, model=model)
+            if usage and self._cost_tracker:
+                try:
+                    self._cost_tracker.record_call(
+                        model=model,
+                        input_tokens=usage.input_tokens,
+                        output_tokens=usage.output_tokens,
+                        check_type="scan",
+                    )
+                except Exception as exc:
+                    logger.debug("Cost tracking error: %s", exc)
             result = self._parse_calibration_response(raw_text)
             logger.info(
                 "Calibration angle %+d°: usefulness=%d home_spot=%s — %s",
@@ -389,9 +439,9 @@ class ParkingVision:
     # Claude API call
     # ------------------------------------------------------------------
 
-    def _send_to_claude(self, image_bytes: bytes, prompt: str, model: Optional[str] = None) -> str:
+    def _send_to_claude(self, image_bytes: bytes, prompt: str, model: Optional[str] = None):
         """
-        Send an image and prompt to Claude, returning the response text.
+        Send an image and prompt to Claude, returning the response text and usage.
 
         Args:
             image_bytes: Raw JPEG image data.
@@ -399,7 +449,7 @@ class ParkingVision:
             model: Override the model for this call.  Defaults to CLAUDE_MODEL.
 
         Returns:
-            Claude's response as a string.
+            Tuple of (response_text: str, usage: object | None).
         """
         b64_image = base64.standard_b64encode(image_bytes).decode("utf-8")
 
@@ -431,7 +481,8 @@ class ParkingVision:
 
         response_text = message.content[0].text
         logger.debug("Claude raw response: %s", response_text[:200])
-        return response_text
+        usage = getattr(message, "usage", None)
+        return response_text, usage
 
     # ------------------------------------------------------------------
     # Response parsing
