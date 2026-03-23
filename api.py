@@ -32,6 +32,7 @@ _vision: Optional[ParkingVision] = None
 _state: Optional[ParkingState] = None
 _start_time: float = 0.0
 _calibrator = None  # Optional[AutoCalibrator] — initialised lazily in start_api()
+_cost_tracker = None  # Optional[CostTracker] — injected by start_api()
 
 
 # ------------------------------------------------------------------
@@ -619,6 +620,21 @@ async def handle_history(request: web.Request) -> web.Response:
         return web.json_response({"error": str(exc)}, status=500)
 
 
+async def handle_cost(request: web.Request) -> web.Response:
+    """GET /cost — Return Claude API cost summary."""
+    try:
+        if _cost_tracker is not None:
+            summary = _cost_tracker.get_cost_summary()
+        elif _state is not None:
+            summary = _state.get_cost_summary()
+        else:
+            return web.json_response({"error": "Cost tracking not available"}, status=503)
+        return web.json_response(summary)
+    except Exception as exc:
+        logger.error("Error in /cost handler: %s", exc)
+        return web.json_response({"error": str(exc)}, status=500)
+
+
 # ------------------------------------------------------------------
 # App factory
 # ------------------------------------------------------------------
@@ -645,6 +661,7 @@ def _build_app() -> web.Application:
     app.router.add_get("/sw.js", handle_sw)
     app.router.add_get("/config", handle_config)
     app.router.add_get("/history", handle_history)
+    app.router.add_get("/cost", handle_cost)
     return app
 
 
@@ -657,6 +674,7 @@ def start_api(
     camera: TapoCamera,
     vision: ParkingVision,
     state: ParkingState,
+    cost_tracker=None,
 ) -> None:
     """
     Initialise module globals and start the aiohttp server.
@@ -664,12 +682,13 @@ def start_api(
     Intended to be called in a daemon thread from main.py.
     Also works standalone: ``python api.py``
     """
-    global _config, _camera, _vision, _state, _start_time, _calibrator
+    global _config, _camera, _vision, _state, _start_time, _calibrator, _cost_tracker
     _config = cfg
     _camera = camera
     _vision = vision
     _state = state
     _start_time = time.time()
+    _cost_tracker = cost_tracker
 
     # Initialise the calibrator lazily to avoid circular imports at module level
     try:

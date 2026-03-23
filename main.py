@@ -75,6 +75,7 @@ def _run_monitoring_loop(
     vision: ParkingVision,
     notifications: NotificationManager,
     state: ParkingState,
+    snapshot_history=None,
 ) -> None:
     """Run the main parking-check loop until shutdown is requested."""
     global _last_frame
@@ -87,6 +88,12 @@ def _run_monitoring_loop(
     last_cleanup = datetime.now(timezone.utc)
     _last_watch_update = time.monotonic()
     _scan_counter = 0
+
+    # Pending notification for debounce/confirmation logic
+    # Structure: {"status": str, "previous": str, "description": str,
+    #             "timestamp": float, "image_bytes": bytes, "before_image": bytes|None}
+    _pending_notification: Optional[dict] = None
+    _night_mode_active = False
 
     while not _shutdown_event.is_set():
         loop_start = time.monotonic()
@@ -101,6 +108,10 @@ def _run_monitoring_loop(
 
             # 2. Grab frame
             image_bytes = camera.grab_frame()
+
+            # 2a. Add frame to snapshot history buffer
+            if snapshot_history is not None:
+                snapshot_history.add_frame(image_bytes)
 
             # 3. Motion gate — skip Claude if the parking zone hasn't changed.
             #    Only applies during background monitoring (not watch mode or
@@ -117,6 +128,8 @@ def _run_monitoring_loop(
                 )
                 _last_frame = image_bytes
                 check_interval = config.CHECK_INTERVAL
+                if _night_mode_active:
+                    check_interval *= getattr(config, "NIGHT_MODE_INTERVAL_MULTIPLIER", 2)
                 elapsed = time.monotonic() - loop_start
                 sleep_time = max(0.0, check_interval - elapsed)
                 _shutdown_event.wait(timeout=sleep_time)
@@ -124,10 +137,28 @@ def _run_monitoring_loop(
 
             _last_frame = image_bytes
 
-            # 4. Prepare image for Claude (resize + crop) and use fast model
-            #    for routine background checks.
+            # 4. Determine model — use night mode model during quiet hours,
+            #    otherwise use the fast model for routine background checks.
+            is_quiet = notifications.is_quiet_hours()
+            if is_quiet and not _night_mode_active:
+                logger.info("Night mode activated — switching to %s", config.NIGHT_MODE_MODEL)
+                _night_mode_active = True
+            elif not is_quiet and _night_mode_active:
+                logger.info("Night mode deactivated — returning to fast model")
+                _night_mode_active = False
+
+            night_model = getattr(config, "NIGHT_MODE_MODEL", None)
+            if is_quiet and night_model:
+                model_override = night_model
+            else:
+                model_override = None
+
             vision_image = camera.prepare_for_vision(image_bytes)
-            result = vision.check_home_spot(vision_image, use_fast_model=True)
+            result = vision.check_home_spot(
+                vision_image,
+                use_fast_model=not is_quiet,
+                model_override=model_override,
+            )
             status = result.get("status", "UNKNOWN")
             confidence = result.get("confidence", "low")
             description = result.get("description", "")
@@ -136,24 +167,101 @@ def _run_monitoring_loop(
                 "Check: status=%s confidence=%s — %s", status, confidence, description
             )
 
-            # 5. Save previous status BEFORE recording the current check
+            # 5. Update HomeKit accessory
+            try:
+                from homekit import get_homekit_accessory
+                hk_acc = get_homekit_accessory()
+                if hk_acc is not None:
+                    hk_acc.update_status(status)
+            except Exception as exc:
+                logger.debug("HomeKit update error: %s", exc)
+
+            # 6. Save previous status BEFORE recording the current check
             previous = state.get_previous_status()
 
-            # 6. Record the current check first
+            # 7. Record the current check first
             state.record_check(status, confidence, description, angle=config.HOME_POSITION)
 
-            # 7. Notify if state changed and confidence threshold met.
-            #    Skip on the very first run (previous is None) to avoid a spurious alert.
+            # 8. Notification batching / confirmation logic.
+            #    Instead of immediately notifying on state change, store a pending
+            #    notification and confirm it on the next cycle.
+            confirm_seconds = getattr(config, "NOTIFICATION_CONFIRM_SECONDS", 0)
+
             if status != "UNKNOWN" and _meets_threshold(confidence, config.CONFIDENCE_THRESHOLD):
-                if previous is not None and previous != status:
+                if _pending_notification is not None:
+                    pending_status = _pending_notification["status"]
+                    if status == pending_status:
+                        # Confirmed — send the notification now
+                        before_img = _pending_notification.get("before_image")
+                        pending_desc = _pending_notification["description"]
+                        pending_prev = _pending_notification["previous"]
+                        pending_img = _pending_notification["image_bytes"]
+                        logger.info(
+                            "Confirmed state change: %s → %s — sending notification",
+                            pending_prev, pending_status,
+                        )
+                        if pending_status == "FREE":
+                            notifications.notify_space_free(pending_desc, pending_img, before_image=before_img)
+                        elif pending_status == "OCCUPIED":
+                            notifications.notify_space_occupied(pending_desc, pending_img, before_image=before_img)
+                        state.record_state_change(pending_prev, pending_status, pending_desc)
+                        if snapshot_history is not None:
+                            snapshot_history.save_pair(
+                                before_img, pending_img,
+                                label=f"{pending_prev}_to_{pending_status}",
+                            )
+                        _pending_notification = None
+                    else:
+                        # State flipped back — transient flip, discard
+                        logger.info(
+                            "Transient flip detected: %s → %s → %s — suppressing notification",
+                            _pending_notification["previous"],
+                            pending_status,
+                            status,
+                        )
+                        state.record_transient_flip(
+                            from_status=_pending_notification["previous"],
+                            to_status=pending_status,
+                            back_status=status,
+                            description=description,
+                        )
+                        _pending_notification = None
+
+                elif previous is not None and previous != status and confirm_seconds > 0:
+                    # State changed — queue a pending notification
+                    before_img: Optional[bytes] = None
+                    if snapshot_history is not None:
+                        before_img, _ = snapshot_history.get_before_after()
+                    logger.info(
+                        "State change detected: %s → %s — waiting for confirmation",
+                        previous, status,
+                    )
+                    _pending_notification = {
+                        "status": status,
+                        "previous": previous,
+                        "description": description,
+                        "timestamp": time.monotonic(),
+                        "image_bytes": image_bytes,
+                        "before_image": before_img,
+                    }
+
+                elif previous is not None and previous != status and confirm_seconds == 0:
+                    # Confirmation disabled — notify immediately
+                    before_img = None
+                    if snapshot_history is not None:
+                        before_img, _ = snapshot_history.get_before_after()
                     logger.info("State change detected: %s → %s", previous, status)
                     if status == "FREE":
-                        notifications.notify_space_free(description, image_bytes)
+                        notifications.notify_space_free(description, image_bytes, before_image=before_img)
                     elif status == "OCCUPIED":
-                        notifications.notify_space_occupied(description, image_bytes)
+                        notifications.notify_space_occupied(description, image_bytes, before_image=before_img)
                     state.record_state_change(previous, status, description)
+                    if snapshot_history is not None:
+                        snapshot_history.save_pair(
+                            before_img, image_bytes, label=f"{previous}_to_{status}"
+                        )
 
-            # 8. Watch mode: proactive updates for /leaving mode
+            # 9. Watch mode: proactive updates for /leaving mode
             if is_watching and watch["mode"] == "leaving":
                 now = time.monotonic()
                 if now - _last_watch_update >= config.LEAVING_UPDATE_INTERVAL:
@@ -173,7 +281,7 @@ def _run_monitoring_loop(
                             )
                         )
 
-            # 9. Periodic background scan to populate the scan cache.
+            # 10. Periodic background scan to populate the scan cache.
             #    Uses early-exit iteration: stops as soon as a free space is found.
             _scan_counter += 1
             if config.BACKGROUND_SCAN_EVERY > 0 and _scan_counter >= config.BACKGROUND_SCAN_EVERY:
@@ -226,6 +334,10 @@ def _run_monitoring_loop(
                 check_interval = config.LEAVING_CHECK_INTERVAL
         else:
             check_interval = config.CHECK_INTERVAL
+            # Night mode: double the interval during quiet hours
+            if _night_mode_active:
+                multiplier = getattr(config, "NIGHT_MODE_INTERVAL_MULTIPLIER", 2)
+                check_interval *= multiplier
 
         elapsed = time.monotonic() - loop_start
         sleep_time = max(0.0, check_interval - elapsed)
@@ -254,9 +366,35 @@ def main() -> None:
 
     # 2. Initialise components
     camera = TapoCamera(config)
-    vision = ParkingVision(config)
+
+    # Initialise cost tracker if enabled
+    cost_tracker = None
+    if getattr(config, "COST_TRACKING_ENABLE", True):
+        try:
+            from cost_tracker import CostTracker
+            cost_tracker = CostTracker(config.DB_PATH)
+            logger.info("Cost tracking enabled")
+        except Exception as exc:
+            logger.warning("Could not initialise CostTracker: %s", exc)
+
+    vision = ParkingVision(config, cost_tracker=cost_tracker)
     notifications = NotificationManager(config)
     state = ParkingState(config.DB_PATH)
+
+    # Initialise snapshot history if enabled
+    snapshot_history = None
+    if getattr(config, "SNAPSHOT_HISTORY_ENABLE", True):
+        try:
+            from snapshot_history import SnapshotHistory
+            snapshot_history = SnapshotHistory(
+                snapshot_dir=getattr(config, "SNAPSHOT_DIR", "snapshots"),
+                buffer_size=getattr(config, "SNAPSHOT_BUFFER_SIZE", 5),
+                max_pairs=getattr(config, "SNAPSHOT_MAX_PAIRS", 100),
+                enabled=True,
+            )
+            logger.info("Snapshot history enabled (dir=%s)", config.SNAPSHOT_DIR)
+        except Exception as exc:
+            logger.warning("Could not initialise SnapshotHistory: %s", exc)
 
     # 3. Startup self-test
     logger.info("Running startup self-test…")
@@ -324,6 +462,7 @@ def main() -> None:
         bot_thread = threading.Thread(
             target=start_bot,
             args=(config, camera, vision, state, notifications),
+            kwargs={"cost_tracker": cost_tracker},
             daemon=True,
             name="TelegramBot",
         )
@@ -337,6 +476,7 @@ def main() -> None:
         api_thread = threading.Thread(
             target=start_api,
             args=(config, camera, vision, state),
+            kwargs={"cost_tracker": cost_tracker},
             daemon=True,
             name="HttpApi",
         )
@@ -345,6 +485,21 @@ def main() -> None:
     else:
         logger.info("HTTP API disabled")
 
+    # 6a. Start HomeKit in a daemon thread (if enabled)
+    if getattr(config, "HOMEKIT_ENABLE", False):
+        try:
+            from homekit import start_homekit
+            homekit_thread = threading.Thread(
+                target=start_homekit,
+                args=(config, state),
+                daemon=True,
+                name="HomeKit",
+            )
+            homekit_thread.start()
+            logger.info("HomeKit thread started on port %d", config.HOMEKIT_PORT)
+        except Exception as exc:
+            logger.warning("Could not start HomeKit thread: %s", exc)
+
     # 7. Send startup notification
     try:
         notifications.notify_startup()
@@ -352,11 +507,16 @@ def main() -> None:
         logger.warning("Startup notification failed: %s", exc)
 
     # 8. Run monitoring loop (blocks until shutdown)
-    _run_monitoring_loop(config, camera, vision, notifications, state)
+    _run_monitoring_loop(config, camera, vision, notifications, state, snapshot_history=snapshot_history)
 
     # 9. Cleanup
     logger.info("Shutdown complete")
     state.close()
+    if cost_tracker is not None:
+        try:
+            cost_tracker.close()
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":

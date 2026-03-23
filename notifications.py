@@ -190,7 +190,7 @@ class NotificationManager:
     # High-level notification helpers
     # ------------------------------------------------------------------
 
-    def notify_space_free(self, description: str, image: Optional[bytes] = None) -> None:
+    def notify_space_free(self, description: str, image: Optional[bytes] = None, before_image: Optional[bytes] = None) -> None:
         """Notify that the parking space is now FREE."""
         title = "🅿️ Space is FREE!"
         safe_desc = _escape_markdown(description)
@@ -206,15 +206,19 @@ class NotificationManager:
 
         try:
             self.send_telegram(message=message, image=image)
+            if before_image:
+                self.send_telegram(message="📷 Before:", image=before_image)
         except Exception as exc:
             logger.error("notify_space_free Telegram error: %s", exc)
 
-    def notify_space_occupied(self, description: str, image: Optional[bytes] = None) -> None:
+    def notify_space_occupied(self, description: str, image: Optional[bytes] = None, before_image: Optional[bytes] = None) -> None:
         """Notify that the parking space is now OCCUPIED."""
         safe_desc = _escape_markdown(description)
         message = f"🚗 *Space is now occupied*\n{safe_desc}"
         try:
             self.send_telegram(message=message, image=image)
+            if before_image:
+                self.send_telegram(message="📷 Before:", image=before_image)
         except Exception as exc:
             logger.error("notify_space_occupied Telegram error: %s", exc)
 
