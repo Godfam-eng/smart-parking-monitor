@@ -31,12 +31,12 @@ class TestEstimateCost:
         assert _model_to_key("claude-opus-4") == "default"
 
     def test_haiku_cost_calculation(self):
-        # 1M input + 1M output at haiku rates: $0.80 + $4.00 = $4.80
+        # 1M input tokens at $0.80/MTok + 1M output tokens at $4.00/MTok = $4.80
         cost = _estimate_cost("claude-haiku-4-5-20251001", 1_000_000, 1_000_000)
         assert abs(cost - 4.80) < 1e-4
 
     def test_sonnet_cost_calculation(self):
-        # 1M input + 1M output at sonnet rates: $3.00 + $15.00 = $18.00
+        # 1M input tokens at $3.00/MTok + 1M output tokens at $15.00/MTok = $18.00
         cost = _estimate_cost("claude-sonnet-4-5", 1_000_000, 1_000_000)
         assert abs(cost - 18.00) < 1e-4
 
